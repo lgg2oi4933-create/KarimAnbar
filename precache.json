@@ -1,0 +1,32 @@
+{
+  "version": "7e3a2af394",
+  "files": [
+    "./",
+    "./index.html",
+    "./manifest.webmanifest",
+    "./css/app.css",
+    "./js/app.js",
+    "./js/core/events.js",
+    "./js/core/jalali.js",
+    "./js/core/registry.js",
+    "./js/core/repo.js",
+    "./js/core/router.js",
+    "./js/core/session.js",
+    "./js/core/storage.js",
+    "./js/core/util.js",
+    "./js/modules/home/index.js",
+    "./js/modules/parties/index.js",
+    "./js/modules/parties/model.js",
+    "./js/modules/products/index.js",
+    "./js/modules/products/model.js",
+    "./js/modules/products/tree.js",
+    "./js/modules/settings/index.js",
+    "./js/ui/components.js",
+    "./js/ui/dom.js",
+    "./js/ui/icons.js",
+    "./js/ui/theme.js",
+    "./icons/icon-192.png",
+    "./icons/icon-512.png",
+    "./icons/icon-maskable-512.png"
+  ]
+}
