@@ -62,7 +62,7 @@ async function listPage(ctx) {
 }
 
 // ---------------------------------------------------------------- انتخاب فاکتور مرتبط
-function invoiceSelect({ db, getDir, getPartyId, initial }) {
+export function invoiceSelect({ db, getDir, getPartyId, initial }) {
   const select = h('select', { 'aria-label': 'فاکتور مرتبط' });
   let last = '';
   async function refresh(keep) {

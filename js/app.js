@@ -18,6 +18,7 @@ import { registerInvoices } from './modules/invoices/index.js';
 import { registerPayments } from './modules/payments/index.js';
 import { registerChecks } from './modules/checks/index.js';
 import { registerLedger } from './modules/ledger/index.js';
+import { registerHr } from './modules/hr/index.js';
 
 // ترتیب ثبت مهم نیست؛ ترتیب نمایش با order هر ماژول تعیین میشود
 registerAuth();
@@ -28,6 +29,7 @@ registerChecks();
 registerParties();
 registerProducts();
 registerLedger();
+registerHr();
 registerSettings();
 
 async function boot() {

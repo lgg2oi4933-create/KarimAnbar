@@ -73,10 +73,10 @@ export async function deletePaymentCascade(db, payment) {
 }
 
 // خرج چک دریافتی به یک شخص دیگر: برای او یک «پرداخت» با همان چک ثبت میشود
-export async function endorseCheck(db, check, { partyId, date, note }) {
+export async function endorseCheck(db, check, { partyId, date, note, invoiceId }) {
   const pt = db.table('payments');
   const p = await pt.create(
-    { direction: 'out', method: 'check', kind: 'endorse', date, partyId, amount: check.amount, checkId: check.id, invoiceId: '', note: note || '' },
+    { direction: 'out', method: 'check', kind: 'endorse', date, partyId, amount: check.amount, checkId: check.id, invoiceId: invoiceId || '', note: note || '' },
     { prefix: 'PY' }
   );
   await db.table('checks').update(check.id, { endorsementPaymentId: p.id, endorsedToId: partyId, endorsedDate: date });

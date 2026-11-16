@@ -191,12 +191,37 @@ async function balancesWidget(ctx) {
     h(
       'div',
       { class: 'split' },
-      h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'طلب ما (بدهکاران)'), h('b', { class: 'amount-credit' }, formatMoney(receivable))),
-      h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'بدهی ما (بستانکاران)'), h('b', { class: 'amount-debit' }, formatMoney(payable)))
+      h('button', { class: 'stat stat-btn', onclick: () => ctx.go('/balances?side=debtor') }, h('span', { class: 'muted' }, 'طلب ما (بدهکاران) ‹'), h('b', { class: 'amount-credit' }, formatMoney(receivable))),
+      h('button', { class: 'stat stat-btn', onclick: () => ctx.go('/balances?side=creditor') }, h('span', { class: 'muted' }, 'بدهی ما (بستانکاران) ‹'), h('b', { class: 'amount-debit' }, formatMoney(payable)))
     ),
     top.length
       ? h('div', { class: 'list pad-top' }, top.map(({ p, b }) => row({ leading: icon('user'), title: partyName(p), meta: formatMoney(b), onclick: () => ctx.go(`/parties/${p.id}`) })))
       : null
+  );
+}
+
+// ---------------------------------------------------------------- فهرست بدهکاران / بستانکاران
+async function balancesPage(ctx) {
+  const side = ctx.query.side === 'creditor' ? 'creditor' : 'debtor';
+  ctx.setBack('/');
+  ctx.setTitle(side === 'debtor' ? 'بدهکاران (طلب ما)' : 'بستانکاران (بدهی ما)');
+  const parties = await ctx.db.table('parties').list();
+  const { invoices, payments, checks } = await loadAll(ctx.db);
+  const bal = allBalances(parties, invoices, payments, checks);
+  const items = parties
+    .map((p) => ({ p, b: bal.get(p.id) || 0 }))
+    .filter((x) => (side === 'debtor' ? x.b > 0 : x.b < 0))
+    .sort((a, b) => Math.abs(b.b) - Math.abs(a.b));
+  const total = items.reduce((a, x) => a + Math.abs(x.b), 0);
+  ctx.el.append(
+    section(null, h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'جمع'), h('b', { class: side === 'debtor' ? 'amount-credit' : 'amount-debit' }, `${formatMoney(total)}`))),
+    h(
+      'div',
+      { class: 'list' },
+      items.length
+        ? items.map(({ p, b }) => row({ leading: icon('user'), title: partyName(p), subtitle: (p.mobile && toFaDigits(p.mobile)) || p.code, meta: formatMoney(Math.abs(b)), onclick: () => ctx.go(`/parties/${p.id}`) }))
+        : [emptyState('users', side === 'debtor' ? 'بدهکاری نیست' : 'بستانکاری نیست')]
+    )
   );
 }
 
@@ -213,6 +238,9 @@ export function registerLedger() {
     id: 'ledger',
     title: 'دفتر حساب',
     tables: [],
-    routes: [{ path: '/parties/:id/statement', render: statementPage }],
+    routes: [
+      { path: '/parties/:id/statement', render: statementPage },
+      { path: '/balances', render: balancesPage },
+    ],
   });
 }

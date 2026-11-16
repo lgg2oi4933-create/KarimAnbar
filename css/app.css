@@ -882,3 +882,5 @@ button.row:active {
   margin-left: 0;
   margin-right: 4px;
 }
+
+.stat-btn{background:none;border:0;padding:0;text-align:start;font:inherit;color:inherit;cursor:pointer}

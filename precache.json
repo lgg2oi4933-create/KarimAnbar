@@ -1,5 +1,5 @@
 {
-  "version": "f558862f12",
+  "version": "2836c2c7d6",
   "files": [
     "./",
     "./index.html",
@@ -20,6 +20,8 @@
     "./js/modules/checks/index.js",
     "./js/modules/checks/model.js",
     "./js/modules/home/index.js",
+    "./js/modules/hr/calc.js",
+    "./js/modules/hr/index.js",
     "./js/modules/invoices/index.js",
     "./js/modules/invoices/model.js",
     "./js/modules/ledger/index.js",

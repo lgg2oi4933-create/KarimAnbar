@@ -223,7 +223,7 @@ export async function renderDoc(doc) {
     c.font = `400 21px ${FONT}`;
     c.fillStyle = '#98a2b8';
     c.textAlign = 'center';
-    c.fillText(pages.length > 1 ? `صفحه ${toFa(i + 1)} از ${toFa(pages.length)}` : 'حسابداری', PAGE_W / 2, PAGE_H - 36);
+    if (pages.length > 1) c.fillText(`صفحه ${toFa(i + 1)} از ${toFa(pages.length)}`, PAGE_W / 2, PAGE_H - 36);
   });
   return pages;
 }

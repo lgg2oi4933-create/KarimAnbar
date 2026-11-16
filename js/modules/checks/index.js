@@ -10,6 +10,7 @@ import { indexById, checksDueSoon } from '../../core/finance.js';
 import { diffDaysIso } from '../../core/jalali.js';
 import { partyName } from '../parties/model.js';
 import { CHECK_DIRS, dirLabel, checkStatus, dueInfo } from './model.js';
+import { invoiceSelect } from '../payments/index.js';
 import { endorseCheck, unendorseCheck, setCheckStatus, deletePaymentCascade } from '../payments/service.js';
 
 const T = 'checks';
@@ -191,12 +192,15 @@ async function bounceCheck(ctx, c) {
 
 function endorseSheet(ctx, c) {
   let s;
-  const form = buildForm({
+  let form;
+  let invSel;
+  form = buildForm({
     values: { date: todayIso(), partyId: '' },
     submitText: 'خرج چک',
     onCancel: () => s.close(),
     fields: [
-      { name: 'partyId', label: 'خرج به', type: 'custom', required: true, render: (init) => partyPicker({ db: ctx.db, value: init, getRoles: () => ['supplier', 'subcontractor'], placeholder: 'انتخاب تأمین‌کننده...' }) },
+      { name: 'partyId', label: 'خرج به', type: 'custom', required: true, render: (init) => partyPicker({ db: ctx.db, value: init, getRoles: () => ['supplier', 'subcontractor'], placeholder: 'انتخاب تأمین‌کننده...', onChange: () => setTimeout(() => invSel && invSel.refreshIfChanged(), 0) }) },
+      { name: 'invoiceId', label: 'مربوط به فاکتور (اختیاری)', type: 'custom', render: (init) => (invSel = invoiceSelect({ db: ctx.db, getDir: () => 'out', getPartyId: () => (form ? form.control('partyId').getValue() : ''), initial: init })) },
       { name: 'date', label: 'تاریخ', type: 'date', required: true },
       { name: 'note', label: 'توضیحات', type: 'textarea' },
     ],
@@ -208,6 +212,8 @@ function endorseSheet(ctx, c) {
       ctx.refresh();
     },
   });
+  form.addEventListener('click', () => invSel && invSel.refreshIfChanged());
+  form.addEventListener('input', () => invSel && invSel.refreshIfChanged());
   s = sheet({ title: 'خرج کردن چک', body: [h('p', { class: 'muted' }, `مبلغ ${formatMoney(c.amount)} از بدهی شما به آن شخص کم میشود.`), form] });
 }
 
