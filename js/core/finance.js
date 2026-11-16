@@ -40,7 +40,8 @@ export function balanceLabel(balance) {
 }
 
 // بدهکار = طرف حساب به ما بدهکار است (مثبت). بستانکار = ما به او بدهکاریم (منفی).
-export function ledgerFor(party, invoices, payments, checks) {
+// extras: ردیف‌های اضافی از ماژول‌های دیگر (مثلاً اجرت برون‌سپاری) به شکل {partyId,date,desc,debit,credit,refType,refId}
+export function ledgerFor(party, invoices, payments, checks, extras = []) {
   const checksById = indexById(checks);
   const rows = [];
 
@@ -92,6 +93,11 @@ export function ledgerFor(party, invoices, payments, checks) {
     });
   }
 
+  for (const x of extras) {
+    if (x.partyId !== party.id) continue;
+    rows.push({ date: x.date, sort: x.sort || '', kind: 'extra', refType: x.refType, refId: x.refId, desc: x.desc, debit: Number(x.debit) || 0, credit: Number(x.credit) || 0 });
+  }
+
   rows.sort((a, b) => (a.date === b.date ? (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0) : a.date < b.date ? -1 : 1));
   let balance = 0;
   let debit = 0;
@@ -125,9 +131,9 @@ export function filterLedger(result, from, to) {
   return { ...result, shown };
 }
 
-export function allBalances(parties, invoices, payments, checks) {
+export function allBalances(parties, invoices, payments, checks, extras = []) {
   const out = new Map();
-  for (const p of parties) if (!p.deletedAt) out.set(p.id, ledgerFor(p, invoices, payments, checks).balance);
+  for (const p of parties) if (!p.deletedAt) out.set(p.id, ledgerFor(p, invoices, payments, checks, extras).balance);
   return out;
 }
 

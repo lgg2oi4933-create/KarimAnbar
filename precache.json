@@ -1,5 +1,5 @@
 {
-  "version": "2836c2c7d6",
+  "version": "406cdbb67c",
   "files": [
     "./",
     "./index.html",
@@ -22,6 +22,8 @@
     "./js/modules/home/index.js",
     "./js/modules/hr/calc.js",
     "./js/modules/hr/index.js",
+    "./js/modules/inventory/index.js",
+    "./js/modules/inventory/stock.js",
     "./js/modules/invoices/index.js",
     "./js/modules/invoices/model.js",
     "./js/modules/ledger/index.js",
@@ -30,6 +32,7 @@
     "./js/modules/payments/index.js",
     "./js/modules/payments/model.js",
     "./js/modules/payments/service.js",
+    "./js/modules/production/index.js",
     "./js/modules/products/index.js",
     "./js/modules/products/model.js",
     "./js/modules/products/tree.js",

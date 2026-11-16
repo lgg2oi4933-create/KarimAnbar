@@ -1,0 +1,243 @@
+// ماژول انبار: موجودی کالاها، ورود/خروج دستی، لات‌های ورق و کاردکس هر کالا.
+// موجودی از فاکتورها و تولید حساب میشود؛ اینجا فقط تعدیل‌های دستی ذخیره میشود.
+import { h } from '../../ui/dom.js';
+import { icon } from '../../ui/icons.js';
+import { badge, buildForm, confirmDialog, emptyState, kv, row, searchBar, section, sheet, tabs, toast } from '../../ui/components.js';
+import { productPicker } from '../../ui/pickers.js';
+import { registerModule, extend } from '../../core/registry.js';
+import { matches, toFaDigits, formatNumber } from '../../core/util.js';
+import { formatJalali, todayIso } from '../../core/jalali.js';
+import { KINDS, kindInfo, unitLabel, dimsText } from '../products/model.js';
+import { partyName } from '../parties/model.js';
+import { REASONS, loadStockData, movementsFor, stockOf, lotUsage, lotRemaining, syncLots } from './stock.js';
+
+const T = 'stock_moves';
+const qty = (n, unit) => `${formatNumber(n, { decimals: 3 })} ${unitLabel(unit || 'kg')}`;
+
+// ---------------------------------------------------------------- نمای کلی انبار
+async function overviewPage(ctx) {
+  ctx.setTitle('انبار');
+  ctx.setBack('/more');
+  await syncLots(ctx.db);
+  const [products, data] = await Promise.all([ctx.db.table('products').list(), loadStockData(ctx.db)]);
+  let kind = 'all';
+  let q = '';
+  const listEl = h('div', { class: 'list' });
+  const paint = () => {
+    const items = products
+      .filter((p) => kind === 'all' || p.kind === kind)
+      .filter((p) => matches([p.name, p.code, dimsText(p)], q))
+      .sort((a, b) => a.name.localeCompare(b.name, 'fa'));
+    listEl.replaceChildren(
+      ...(items.length
+        ? items.map((p) => {
+            const s = stockOf(p.id, data);
+            return row({
+              leading: icon('box'),
+              title: p.name,
+              subtitle: kindInfo(p.kind).label,
+              meta: h('b', { class: s < 0 ? 'amount-debit' : '' }, qty(s, p.unit)),
+              onclick: () => ctx.go(`/inventory/product/${p.id}`),
+            });
+          })
+        : [emptyState('box', products.length ? 'موردی پیدا نشد' : 'ابتدا در بخش «کالاها» کالا تعریف کنید')])
+    );
+  };
+  ctx.el.append(
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary', onclick: () => moveSheet(ctx, null, {}) }, 'ورود / خروج دستی'),
+      h('button', { class: 'btn ghost', onclick: () => ctx.go('/inventory/lots') }, 'لات‌های ورق'),
+      h('button', { class: 'btn ghost', onclick: () => ctx.go('/production') }, 'تولید')),
+    searchBar((v) => ((q = v), paint()), 'جستجوی کالا...'),
+    tabs([{ value: 'all', label: 'همه' }, ...KINDS.map((k) => ({ value: k.value, label: k.label }))], kind, (v) => ((kind = v), paint())),
+    listEl
+  );
+  paint();
+}
+
+// ---------------------------------------------------------------- کاردکس کالا
+async function productPage(ctx) {
+  const p = await ctx.db.table('products').get(ctx.params.id);
+  ctx.setBack('/inventory');
+  if (!p || p.deletedAt) return void ctx.el.append(emptyState('box', 'این کالا پیدا نشد'));
+  ctx.setTitle(`موجودی ${p.name}`);
+  await syncLots(ctx.db);
+  const data = await loadStockData(ctx.db);
+  const rows = movementsFor(p.id, data);
+  const bal = rows.length ? rows[rows.length - 1].balance : 0;
+  ctx.el.append(
+    section(null, h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'موجودی فعلی'), h('b', { class: bal < 0 ? 'amount-debit' : '' }, qty(bal, p.unit))), bal < 0 ? h('p', { class: 'muted' }, 'منفی یعنی بیشتر از ورودی‌های ثبت‌شده خارج شده؛ ورود اول دوره یا فاکتور خرید را بررسی کنید.') : null),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onclick: () => moveSheet(ctx, null, { productId: p.id }) }, 'ورود / خروج دستی')),
+    h(
+      'div',
+      { class: 'list pad-top' },
+      rows.length
+        ? rows
+            .slice()
+            .reverse()
+            .map((r) =>
+              row({
+                leading: icon(r.qty > 0 ? 'plus' : 'back'),
+                title: r.desc,
+                subtitle: formatJalali(r.date),
+                meta: h('div', null, h('div', { class: r.qty > 0 ? 'amount-credit' : 'amount-debit' }, `${r.qty > 0 ? '+' : ''}${formatNumber(r.qty, { decimals: 3 })}`), h('small', { class: 'muted' }, `مانده ${formatNumber(r.balance, { decimals: 3 })}`)),
+                onclick: r.refType === 'move' ? async () => moveSheet(ctx, await ctx.db.table(T).get(r.refId), {}) : () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : 'production'}/${r.refId}`),
+              })
+            )
+        : [emptyState('box', 'هنوز حرکتی ندارد')]
+    )
+  );
+}
+
+// ---------------------------------------------------------------- ورود/خروج دستی
+async function moveSheet(ctx, existing, preset = {}, done) {
+  const redo = done || (() => ctx.refresh());
+  let s;
+  const form = buildForm({
+    values: existing || { direction: 'in', date: todayIso(), reason: 'opening', ...preset },
+    submitText: existing ? 'ذخیره' : 'ثبت',
+    onCancel: () => s.close(),
+    extraActions: existing
+      ? [h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+          if (!(await confirmDialog('این ورود/خروج حذف شود؟', { danger: true, okText: 'حذف' }))) return;
+          await ctx.db.table(T).remove(existing.id);
+          s.close();
+          toast('حذف شد');
+          redo();
+        } }, 'حذف')]
+      : [],
+    fields: [
+      { name: 'productId', label: 'کالا', type: 'custom', required: true, render: (init) => productPicker({ db: ctx.db, value: init, getKinds: () => [] }) },
+      { name: 'direction', label: 'نوع', type: 'choice', options: [{ value: 'in', label: 'ورود به انبار' }, { value: 'out', label: 'خروج از انبار' }] },
+      { name: 'qty', label: 'مقدار', type: 'number', min: 0, required: true, hint: 'کیلوگرم یا عدد، مطابق واحد کالا' },
+      { name: 'date', label: 'تاریخ', type: 'date', required: true },
+      { name: 'reason', label: 'علت', type: 'select', options: REASONS },
+      { name: 'code', label: 'کد', dir: 'ltr', placeholder: 'خودکار ساخته میشود' },
+      { name: 'note', label: 'توضیحات', type: 'textarea' },
+    ],
+    onSubmit: async (v, { setError }) => {
+      if (!(v.qty > 0)) return setError('qty', 'مقدار باید بیشتر از صفر باشد');
+      const t = ctx.db.table(T);
+      if (v.code && (await t.codeTaken(v.code, existing && existing.id))) return setError('code', 'این کد قبلاً استفاده شده است');
+      if (existing) await t.update(existing.id, { ...v, code: v.code || existing.code });
+      else await t.create(v, { prefix: 'SM' });
+      s.close();
+      toast('ثبت شد');
+      redo();
+    },
+  });
+  s = sheet({ title: existing ? 'ویرایش ورود/خروج' : 'ورود / خروج دستی', body: form });
+}
+
+// ---------------------------------------------------------------- لات‌ها
+async function lotsPage(ctx) {
+  ctx.setTitle('لات‌های ورق');
+  ctx.setBack('/inventory');
+  await syncLots(ctx.db);
+  const [lots, products, batches, invoices, parties] = await Promise.all([ctx.db.table('lots').list(), ctx.db.table('products').list(), ctx.db.table('prod_batches').list(), ctx.db.table('invoices').list(), ctx.db.table('parties').list({ includeDeleted: true })]);
+  const pById = new Map(products.map((p) => [p.id, p]));
+  let only = 'open';
+  let q = '';
+  const listEl = h('div', { class: 'list' });
+  const paint = () => {
+    const items = lots
+      .map((l) => ({ l, rem: lotRemaining(l, batches) }))
+      .filter(({ l, rem }) => (only === 'all' ? true : rem > 0))
+      .filter(({ l }) => matches([l.code, (pById.get(l.productId) || {}).name], q))
+      .sort((a, b) => (a.l.date < b.l.date ? 1 : -1));
+    listEl.replaceChildren(
+      ...(items.length
+        ? items.map(({ l, rem }) => row({ leading: icon('box'), title: `${l.code} · ${(pById.get(l.productId) || {}).name || ''}`, subtitle: `خرید ${formatJalali(l.date)} · ${formatNumber(l.kg, { decimals: 3 })} کیلو`, meta: h('b', { class: rem < 0 ? 'amount-debit' : '' }, `${formatNumber(rem, { decimals: 3 })} کیلو مانده`), onclick: () => ctx.go(`/inventory/lots/${l.id}`) }))
+        : [emptyState('box', lots.length ? 'لات بازی نیست' : 'با ثبت فاکتور خرید ورق، لات‌ها خودکار ساخته میشوند')])
+    );
+  };
+  void invoices; void parties;
+  ctx.el.append(searchBar((v) => ((q = v), paint()), 'جستجوی کد لات یا ورق...'), tabs([{ value: 'open', label: 'باقی‌مانده‌دار' }, { value: 'all', label: 'همه' }], only, (v) => ((only = v), paint())), listEl);
+  paint();
+}
+
+async function lotDetail(ctx) {
+  ctx.setBack('/inventory/lots');
+  await syncLots(ctx.db);
+  const lot = await ctx.db.table('lots').get(ctx.params.id);
+  if (!lot || lot.deletedAt) return void ctx.el.append(emptyState('box', 'این لات پیدا نشد'));
+  ctx.setTitle(`لات ${lot.code}`);
+  const [product, inv, batches] = await Promise.all([ctx.db.table('products').get(lot.productId), ctx.db.table('invoices').get(lot.invoiceId), ctx.db.table('prod_batches').list()]);
+  const party = inv ? await ctx.db.table('parties').get(inv.partyId) : null;
+  const uses = lotUsage(lot.id, batches);
+  const rem = lotRemaining(lot, batches);
+  const used = uses.reduce((a, u) => a + u.kg, 0);
+  ctx.setActions([h('button', { class: 'icon-btn', 'aria-label': 'ویرایش', onclick: () => lotEditSheet(ctx, lot) }, icon('edit'))]);
+  ctx.el.append(
+    section(
+      null,
+      lot.orphan ? h('p', { class: 'muted' }, 'فاکتور یا ردیف خرید این لات حذف شده، ولی چون در تولید مصرف شده سابقه‌اش مانده است.') : null,
+      kv('کد لات', lot.code),
+      kv('ورق', product ? product.name : ''),
+      kv('فاکتور خرید', inv ? h('a', { class: 'link', href: `#/invoices/${inv.id}` }, inv.code) : ''),
+      kv('تأمین‌کننده', party && partyName(party)),
+      kv('تاریخ خرید', formatJalali(lot.date)),
+      kv('وزن خرید', `${formatNumber(lot.kg, { decimals: 3 })} کیلو`),
+      kv('مصرف‌شده', `${formatNumber(used, { decimals: 3 })} کیلو`),
+      kv('باقی‌مانده', `${formatNumber(rem, { decimals: 3 })} کیلو`),
+      kv('توضیحات', lot.note)
+    ),
+    section('در کدام دسته‌ها مصرف شده', uses.length ? h('div', { class: 'list' }, uses.map((u) => row({ leading: icon('activity'), title: u.batch.code, subtitle: formatJalali(u.batch.date), meta: `${formatNumber(u.kg, { decimals: 3 })} کیلو`, onclick: () => ctx.go(`/production/${u.batch.id}`) }))) : h('p', { class: 'muted' }, 'هنوز مصرف نشده.'))
+  );
+}
+
+function lotEditSheet(ctx, lot) {
+  let s;
+  const form = buildForm({
+    values: lot,
+    submitText: 'ذخیره',
+    onCancel: () => s.close(),
+    fields: [
+      { name: 'code', label: 'کد لات', dir: 'ltr', required: true },
+      { name: 'note', label: 'توضیحات', type: 'textarea' },
+    ],
+    onSubmit: async (v, { setError }) => {
+      if (await ctx.db.table('lots').codeTaken(v.code, lot.id)) return setError('code', 'این کد قبلاً استفاده شده است');
+      await ctx.db.table('lots').update(lot.id, v);
+      s.close();
+      toast('ذخیره شد');
+      ctx.refresh();
+    },
+  });
+  s = sheet({ title: 'ویرایش لات', body: form });
+}
+
+// ---------------------------------------------------------------- موجودی در صفحه‌ی کالا
+async function productStockSection(ctx, p) {
+  const data = await loadStockData(ctx.db);
+  const s = stockOf(p.id, data);
+  return section(
+    'موجودی انبار',
+    h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'موجودی فعلی'), h('b', { class: s < 0 ? 'amount-debit' : '' }, qty(s, p.unit))),
+    h('div', { class: 'btn-row pad-top' }, h('button', { class: 'btn ghost', onclick: () => ctx.go(`/inventory/product/${p.id}`) }, 'کاردکس'), h('button', { class: 'btn ghost', onclick: () => moveSheet(ctx, null, { productId: p.id }) }, 'ورود / خروج دستی'))
+  );
+}
+
+export function registerInventory() {
+  extend('product.detail', productStockSection);
+  extend('product.deleteGuard', async (db, p) => {
+    const [moves, batches] = await Promise.all([db.table(T).list(), db.table('prod_batches').list()]);
+    const used = moves.some((m) => m.productId === p.id) || batches.some((b) => b.trayProductId === p.id || (b.glue && b.glue.glueProductId === p.id) || (b.tape && b.tape.tapeProductId === p.id));
+    return used ? 'این کالا در انبار یا تولید استفاده شده. اگر اشتباه ثبت شده، ویرایشش کنید.' : null;
+  });
+  registerModule({
+    id: 'inventory',
+    title: 'انبار',
+    tables: [T, 'lots'],
+    tableLabels: { [T]: 'ورود/خروج انبار', lots: 'لات‌های ورق' },
+    fieldLabels: { direction: 'نوع', qty: 'مقدار', reason: 'علت', productId: 'کالا', kg: 'وزن', orphan: 'بی‌منبع' },
+    home: { order: 40, label: 'انبار', icon: 'box', path: '/inventory', count: async (db) => `${toFaDigits((await db.table('lots').list()).length)} لات ورق` },
+    more: { order: 7, label: 'انبار', desc: 'موجودی، ورود/خروج و لات‌های ورق', icon: 'box', path: '/inventory' },
+    routes: [
+      { path: '/inventory', render: overviewPage },
+      { path: '/inventory/product/:id', render: productPage },
+      { path: '/inventory/lots', render: lotsPage },
+      { path: '/inventory/lots/:id', render: lotDetail },
+    ],
+  });
+}

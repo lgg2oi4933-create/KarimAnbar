@@ -145,13 +145,14 @@ function linesEditor({ db, getType, initial, setError }) {
         )
       )
     );
-    const entry = { get: () => ({ productId: picker.getValue(), title: title.value.trim(), qty: qty.getValue(), price: price.getValue(), unit }) };
+    const lid = l.lid || Math.random().toString(36).slice(2, 10);
+    const entry = { get: () => ({ lid, productId: picker.getValue(), title: title.value.trim(), qty: qty.getValue(), price: price.getValue(), unit }) };
     rows.push(entry);
     list.append(card);
     recalc();
   }
 
-  (initial && initial.length ? initial : [{}]).forEach(addLine);
+  (initial && initial.length ? initial : [{}]).forEach((l, i) => addLine(l.lid || !l.productId ? l : { ...l, lid: 'i' + i }));
   wrap.append(list, h('button', { type: 'button', class: 'btn ghost', onclick: () => addLine() }, '＋ افزودن ردیف'));
   wrap.getValue = () => rows.map((r) => r.get());
   return wrap;
@@ -212,7 +213,7 @@ async function formPage(ctx) {
         if (!l.title && !l.productId) return setError('lines', n + 'شرح یا کالا را وارد کنید');
         if (!(l.qty > 0)) return setError('lines', n + 'مقدار باید بیشتر از صفر باشد');
         if (l.price == null || Number.isNaN(l.price) || l.price < 0) return setError('lines', n + 'فی را وارد کنید');
-        clean.push({ productId: l.productId || '', title: l.title || '', qty: l.qty, price: l.price, unit: l.unit || 'kg' });
+        clean.push({ lid: l.lid, productId: l.productId || '', title: l.title || '', qty: l.qty, price: l.price, unit: l.unit || 'kg' });
       }
       if (!clean.length) return setError('lines', 'حداقل یک ردیف لازم است');
       if (v.code && (await t.codeTaken(v.code, existing && existing.id))) return setError('code', 'این شماره قبلاً استفاده شده است');

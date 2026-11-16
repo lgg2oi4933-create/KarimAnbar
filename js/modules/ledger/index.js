@@ -4,7 +4,7 @@ import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, emptyState, kv, row, section, toast } from '../../ui/components.js';
 import { exportDoc } from '../../ui/exporter.js';
-import { registerModule, extend } from '../../core/registry.js';
+import { registerModule, extend, getExtensions } from '../../core/registry.js';
 import { toFaDigits, formatMoney, formatNumber } from '../../core/util.js';
 import { formatJalali, todayIso } from '../../core/jalali.js';
 import { ledgerFor, filterLedger, balanceLabel, allBalances } from '../../core/finance.js';
@@ -13,7 +13,9 @@ import { getCompany } from '../settings/index.js';
 
 async function loadAll(db) {
   const [invoices, payments, checks] = await Promise.all([db.table('invoices').list(), db.table('payments').list(), db.table('checks').list({ includeDeleted: true })]);
-  return { invoices, payments, checks };
+  const extras = [];
+  for (const fn of getExtensions('ledger.extras')) extras.push(...(await fn(db)));
+  return { invoices, payments, checks, extras };
 }
 
 function balanceText(b) {
@@ -23,8 +25,8 @@ const balanceClass = (b) => (b > 0 ? 'amount-credit' : b < 0 ? 'amount-debit' : 
 
 // ---------------------------------------------------------------- کارت حساب در صفحه‌ی شخص
 async function partyAccountCard(ctx, party) {
-  const { invoices, payments, checks } = await loadAll(ctx.db);
-  const res = ledgerFor(party, invoices, payments, checks);
+  const { invoices, payments, checks, extras } = await loadAll(ctx.db);
+  const res = ledgerFor(party, invoices, payments, checks, extras);
   return section(
     'حساب',
     h('div', { class: 'stat' }, h('span', { class: 'muted' }, 'مانده'), h('b', { class: balanceClass(res.balance) }, balanceText(res.balance))),
@@ -59,8 +61,8 @@ async function statementPage(ctx) {
     return;
   }
   ctx.setTitle(`صورت‌حساب ${partyName(party)}`);
-  const { invoices, payments, checks } = await loadAll(ctx.db);
-  const full = ledgerFor(party, invoices, payments, checks);
+  const { invoices, payments, checks, extras } = await loadAll(ctx.db);
+  const full = ledgerFor(party, invoices, payments, checks, extras);
   let from = ctx.query.from || '';
   let to = ctx.query.to || '';
 
@@ -97,7 +99,7 @@ async function statementPage(ctx) {
                     r.credit ? h('div', { class: 'amount-debit' }, `${formatNumber(r.credit)} بستانکار`) : null,
                     h('small', { class: 'muted' }, `مانده ${balanceText(r.balance)}`)
                   ),
-                  onclick: r.refType ? () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : 'payments'}/${r.refId}`) : null,
+                  onclick: r.refType ? () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : r.refType === 'batch' ? 'production' : 'payments'}/${r.refId}`) : null,
                   trailing: r.refType ? undefined : h('span'),
                 })
               )
@@ -175,8 +177,8 @@ async function statementPage(ctx) {
 async function balancesWidget(ctx) {
   const parties = await ctx.db.table('parties').list();
   if (!parties.length) return null;
-  const { invoices, payments, checks } = await loadAll(ctx.db);
-  const bal = allBalances(parties, invoices, payments, checks);
+  const { invoices, payments, checks, extras } = await loadAll(ctx.db);
+  const bal = allBalances(parties, invoices, payments, checks, extras);
   let receivable = 0;
   let payable = 0;
   for (const b of bal.values()) b > 0 ? (receivable += b) : (payable += -b);
@@ -206,8 +208,8 @@ async function balancesPage(ctx) {
   ctx.setBack('/');
   ctx.setTitle(side === 'debtor' ? 'بدهکاران (طلب ما)' : 'بستانکاران (بدهی ما)');
   const parties = await ctx.db.table('parties').list();
-  const { invoices, payments, checks } = await loadAll(ctx.db);
-  const bal = allBalances(parties, invoices, payments, checks);
+  const { invoices, payments, checks, extras } = await loadAll(ctx.db);
+  const bal = allBalances(parties, invoices, payments, checks, extras);
   const items = parties
     .map((p) => ({ p, b: bal.get(p.id) || 0 }))
     .filter((x) => (side === 'debtor' ? x.b > 0 : x.b < 0))
