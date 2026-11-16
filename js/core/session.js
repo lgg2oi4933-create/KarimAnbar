@@ -49,6 +49,20 @@ export const session = {
   set userName(v) {
     store.set('tray.userName', v || '');
   },
+  get lastActive() {
+    return Number(store.get('tray.lastActive')) || 0;
+  },
+  touch() {
+    store.set('tray.lastActive', String(Date.now()));
+  },
+  // قفل خودکار بعد از چند دقیقه بی‌کاری (۰ = هیچ‌وقت)
+  get lockMinutes() {
+    const v = store.get('tray.lockMinutes');
+    return v === null || v === '' ? 30 : Number(v);
+  },
+  set lockMinutes(v) {
+    store.set('tray.lockMinutes', String(Number(v) || 0));
+  },
   get theme() {
     return store.get('tray.theme') || 'auto';
   },

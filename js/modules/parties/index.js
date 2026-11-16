@@ -114,7 +114,7 @@ async function formPage(ctx) {
   const values = existing || { roles: presetRole ? [presetRole] : [] };
 
   const form = buildForm({
-    values,
+    values: { openingType: 'none', ...values },
     submitText: editing ? 'ذخیره تغییرات' : 'افزودن',
     onCancel: () => ctx.back(),
     fields: [
@@ -138,6 +138,18 @@ async function formPage(ctx) {
       },
       { name: 'address', label: 'آدرس', type: 'textarea' },
       {
+        name: 'openingType',
+        label: 'مانده اول دوره',
+        type: 'choice',
+        options: [
+          { value: 'none', label: 'ندارد' },
+          { value: 'debtor', label: 'بدهکار' },
+          { value: 'creditor', label: 'بستانکار' },
+        ],
+        hint: 'بدهکار یعنی او از قبل به شما بدهکار است؛ بستانکار یعنی شما به او بدهکارید. فقط برای حساب‌هایی که قبل از شروع برنامه مانده داشتند.',
+      },
+      { name: 'openingAmount', label: 'مبلغ مانده (ریال)', type: 'number', money: true, min: 0, show: (v) => v.openingType && v.openingType !== 'none' },
+      {
         name: 'code',
         label: 'کد شخص',
         type: 'text',
@@ -156,7 +168,9 @@ async function formPage(ctx) {
         setError('code', 'این کد قبلاً استفاده شده است');
         return;
       }
+      if (v.openingType !== 'none' && !(v.openingAmount > 0)) return setError('openingAmount', 'مبلغ مانده را وارد کنید');
       const data = { ...v, mobile: v.mobile ? normalizeMobile(v.mobile) : '' };
+      if (v.openingType === 'none') data.openingAmount = null;
       if (editing) {
         if (!data.code) data.code = existing.code;
         await t.update(existing.id, data);
@@ -188,6 +202,8 @@ export function registerParties() {
       address: 'آدرس',
       code: 'کد',
       note: 'توضیحات',
+      openingType: 'نوع مانده اول دوره',
+      openingAmount: 'مبلغ مانده اول دوره',
     },
     nav: { order: 20, label: 'اشخاص', icon: 'users', path: '/parties' },
     home: {

@@ -427,6 +427,7 @@ button.row:active {
   color: var(--danger);
 }
 .form input[type='text'],
+.form input[type='password'],
 .form select,
 .form textarea,
 .form input[type='file'] {
@@ -532,7 +533,7 @@ button.row:active {
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 400;
   background: rgba(10, 14, 25, 0.5);
   display: flex;
   align-items: flex-end;
@@ -587,7 +588,7 @@ button.row:active {
   top: 12px;
   right: 0;
   left: 0;
-  z-index: 200;
+  z-index: 500;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -703,4 +704,181 @@ button.row:active {
   border: 1px solid var(--line);
   border-radius: 12px;
   outline: none;
+}
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.filter-row .filter-select {
+  flex: 1;
+}
+.num-field {
+  display: block;
+}
+.money-hint {
+  min-height: 0;
+  color: var(--primary);
+}
+.picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 12px;
+  text-align: right;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.picker .ph {
+  color: var(--muted);
+}
+.has-error .picker {
+  border-color: var(--danger);
+}
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 28px 16px;
+  overflow: auto;
+  background: var(--bg);
+}
+.lock-card {
+  width: 100%;
+  max-width: 420px;
+  margin-top: 6vh;
+  text-align: center;
+}
+.lock-card .row,
+.lock-card .form {
+  text-align: right;
+}
+.lock-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  margin-bottom: 8px;
+}
+.lock-card h2 {
+  margin: 4px 0 2px;
+}
+.lock-card .list {
+  margin-top: 14px;
+}
+.lock-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.lock-input {
+  width: 100%;
+  min-height: 50px;
+  padding: 9px 14px;
+  font-size: 18px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: none;
+}
+.code-box {
+  font-family: ui-monospace, monospace;
+  font-size: 24px;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px dashed var(--primary);
+  user-select: all;
+}
+.lines {
+  display: grid;
+  gap: 10px;
+}
+.line-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.line-card input[type='text'] {
+  width: 100%;
+  min-height: 42px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+}
+.line-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.line-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.line-total {
+  font-weight: 700;
+}
+.totals {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+.totals .kv.big .v,
+.totals .kv.big .k {
+  font-size: 17px;
+  color: var(--text);
+}
+.amount-debit {
+  color: var(--danger);
+}
+.amount-credit {
+  color: var(--ok);
+}
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat b {
+  font-size: 18px;
+}
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.row .badge {
+  margin-left: 0;
+  margin-right: 4px;
 }

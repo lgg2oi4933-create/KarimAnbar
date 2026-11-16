@@ -1,7 +1,7 @@
 // اجزای مشترک رابط: پیام، پنجره‌ی پایین، تأیید، فرم‌ساز، تاریخ شمسی، تب، ردیف لیست
 import { h, append } from './dom.js';
 import { icon } from './icons.js';
-import { parseNumber, toFaDigits, formatNumber } from '../core/util.js';
+import { parseNumber, toFaDigits, formatNumber, numberToWords } from '../core/util.js';
 import { MONTHS, daysInMonth, isoToJalaliParts, jalaliPartsToIso, toJalali, isValidJalali } from '../core/jalali.js';
 
 // ---------- پیام کوتاه
@@ -209,6 +209,48 @@ export function readImageDownscaled(file, maxSize = 320) {
   });
 }
 
+// ---------- فیلد عدد (با نمایش مبلغ به حروف برای ریال)
+export function numberField({ value = null, money = false, placeholder = '', onInput } = {}) {
+  const show = (v) => (v === null || v === undefined || v === '' ? '' : money ? formatNumber(v) : toFaDigits(String(v)));
+  const input = h('input', {
+    type: 'text',
+    inputmode: 'decimal',
+    dir: 'ltr',
+    autocomplete: 'off',
+    placeholder,
+    class: 'ltr-text',
+    value: show(value),
+  });
+  const hint = money ? h('div', { class: 'hint money-hint' }) : null;
+  const refresh = () => {
+    if (!hint) return;
+    const n = parseNumber(input.value);
+    hint.textContent = n ? `${numberToWords(n)} ریال${n >= 10 ? ` · ${formatNumber(Math.round(n / 10))} تومان` : ''}` : '';
+  };
+  input.addEventListener('input', () => {
+    refresh();
+    if (onInput) onInput();
+  });
+  input.addEventListener('blur', () => {
+    const n = parseNumber(input.value);
+    if (n !== null) input.value = show(n);
+  });
+  refresh();
+  const el = h('div', { class: 'num-field' }, input, hint);
+  el.input = input;
+  el.getValue = () => {
+    const raw = input.value.trim();
+    if (!raw) return null;
+    const n = parseNumber(raw);
+    return n === null ? NaN : n;
+  };
+  el.setValue = (v) => {
+    input.value = show(v);
+    refresh();
+  };
+  return el;
+}
+
 // ---------- فرم‌ساز
 // fields: [{name,label,type,required,options,placeholder,hint,dir,inputmode,validate,show,maxLength,rows}]
 // type: text | tel | number | textarea | select | chips | choice | date | image
@@ -217,6 +259,7 @@ export function buildForm({ fields, values = {}, submitText = 'ذخیره', onSu
   const wrappers = {};
   const getters = {};
   const errs = {};
+  const controls = {};
 
   const form = h('form', { class: 'form', novalidate: true });
 
@@ -282,6 +325,9 @@ export function buildForm({ fields, values = {}, submitText = 'ذخیره', onSu
     } else if (f.type === 'date') {
       control = jalaliDateInput(init, { allowEmpty: !f.required });
       getters[f.name] = () => control.getValue();
+    } else if (f.type === 'custom') {
+      control = f.render(init, { setError: (m) => setErr(f.name, m) });
+      getters[f.name] = () => control.getValue();
     } else if (f.type === 'image') {
       let data = init || '';
       const preview = h('div', { class: 'img-preview' });
@@ -307,30 +353,32 @@ export function buildForm({ fields, values = {}, submitText = 'ذخیره', onSu
       control = h('div', null, preview, file);
       getters[f.name] = () => data;
     } else {
-      const numeric = f.type === 'number';
-      control = h('input', {
-        type: 'text',
-        inputmode: f.inputmode || (numeric ? 'decimal' : f.type === 'tel' ? 'tel' : 'text'),
-        placeholder: f.placeholder || '',
-        maxlength: f.maxLength,
-        dir: f.dir || (numeric || f.type === 'tel' ? 'ltr' : null),
-        autocomplete: 'off',
-        value: init === null || init === undefined ? '' : numeric ? toFaDigits(init) : init,
-        class: numeric || f.type === 'tel' ? 'ltr-text' : '',
-      });
-      getters[f.name] = () => (numeric ? parseNumber(control.value) : control.value.trim());
-      if (numeric) control.addEventListener('blur', () => {
-        const n = parseNumber(control.value);
-        if (n !== null) control.value = toFaDigits(String(n));
-      });
+      if (f.type === 'number') {
+        control = numberField({ value: init, money: !!f.money, placeholder: f.placeholder });
+        getters[f.name] = () => control.getValue();
+      } else {
+        const isPw = f.type === 'password';
+        control = h('input', {
+          type: isPw ? 'password' : 'text',
+          inputmode: f.inputmode || (f.type === 'tel' ? 'tel' : 'text'),
+          placeholder: f.placeholder || '',
+          maxlength: f.maxLength,
+          dir: f.dir || (f.type === 'tel' || isPw ? 'ltr' : null),
+          autocomplete: isPw ? 'new-password' : 'off',
+          value: init === null || init === undefined ? '' : init,
+          class: f.type === 'tel' || isPw ? 'ltr-text' : '',
+        });
+        getters[f.name] = () => (isPw ? control.value : control.value.trim());
+      }
     }
 
-    if (f.type !== 'date' && f.type !== 'image' && f.type !== 'chips' && f.type !== 'choice') {
+    if (f.type !== 'date' && f.type !== 'image' && f.type !== 'chips' && f.type !== 'choice' && f.type !== 'custom') {
       control.addEventListener('input', refreshVisibility);
       control.addEventListener('change', refreshVisibility);
     }
     append(wrap, [label, control, f.hint ? h('div', { class: 'hint' }, f.hint) : null, err]);
     wrappers[f.name] = wrap;
+    controls[f.name] = control;
     form.append(wrap);
   }
 
@@ -351,9 +399,9 @@ export function buildForm({ fields, values = {}, submitText = 'ذخیره', onSu
       let msg = '';
       if (f.required && empty) msg = 'این فیلد الزامی است';
       else if (f.type === 'number' && !empty && Number.isNaN(v)) msg = 'عدد معتبر وارد کنید';
-      else if (f.type === 'number' && f.min !== undefined && !empty && v < f.min) msg = `حداقل مقدار ${formatNumber(f.min)} است`;
+      else if (f.type === 'number' && f.min !== undefined && !empty && !Number.isNaN(v) && v < f.min) msg = `حداقل مقدار ${formatNumber(f.min)} است`;
       else if (f.validate && !empty) msg = f.validate(v, vals) || '';
-      if (f.type === 'date' && wrappers[f.name].querySelector('.date-input').isPartial()) msg = 'تاریخ ناقص یا نامعتبر است';
+      if (f.type === 'date' && wrappers[f.name].querySelector('.date-input') && wrappers[f.name].querySelector('.date-input').isPartial()) msg = 'تاریخ ناقص یا نامعتبر است';
       if (msg) {
         setErr(f.name, msg);
         ok = false;
@@ -388,6 +436,9 @@ export function buildForm({ fields, values = {}, submitText = 'ذخیره', onSu
   });
   refreshVisibility();
   form.get = collect;
+  form.control = (name) => controls[name];
+  form.wrapper = (name) => wrappers[name];
+  form.refresh = refreshVisibility;
   form.setError = setErr;
   return form;
 }

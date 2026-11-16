@@ -1,7 +1,7 @@
 // سرویس‌ورکر: برنامه بعد از اولین باز شدن کاملاً آفلاین کار میکنه.
 // فهرست فایل‌ها از precache.json میاد (با tools/make-precache.mjs ساخته میشه).
 const PREFIX = 'tray-';
-const VERSION = '7e3a2af394'; // توسط tools/make-precache.mjs به‌روز میشه تا مرورگر نسخه‌ی جدید را بشناسد
+const VERSION = 'f558862f12'; // توسط tools/make-precache.mjs به‌روز میشه تا مرورگر نسخه‌ی جدید را بشناسد
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

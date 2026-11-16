@@ -66,7 +66,9 @@ function diff(before, after) {
   const out = {};
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (skip.has(k)) continue;
-    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) out[k] = { from: before[k] ?? null, to: after[k] ?? null };
+    if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
+    // هش رمز هرگز در گزارش فعالیت نمیرود
+    out[k] = k === 'pw' ? { from: '', to: 'تغییر کرد' } : { from: before[k] ?? null, to: after[k] ?? null };
   }
   return out;
 }

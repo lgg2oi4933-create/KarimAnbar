@@ -12,11 +12,22 @@ import { currentPath, matchRoute, go } from './core/router.js';
 import { registerHome } from './modules/home/index.js';
 import { registerParties } from './modules/parties/index.js';
 import { registerProducts } from './modules/products/index.js';
-import { registerSettings, pickUser, currentUser } from './modules/settings/index.js';
+import { registerSettings } from './modules/settings/index.js';
+import { registerAuth, ensureLogin, setupAutoLock, currentUser } from './modules/auth/index.js';
+import { registerInvoices } from './modules/invoices/index.js';
+import { registerPayments } from './modules/payments/index.js';
+import { registerChecks } from './modules/checks/index.js';
+import { registerLedger } from './modules/ledger/index.js';
 
+// ترتیب ثبت مهم نیست؛ ترتیب نمایش با order هر ماژول تعیین میشود
+registerAuth();
 registerHome();
+registerInvoices();
+registerPayments();
+registerChecks();
 registerParties();
 registerProducts();
+registerLedger();
 registerSettings();
 
 async function boot() {
@@ -40,8 +51,7 @@ async function boot() {
   });
   for (const m of getModules()) if (m.init) await m.init(db);
 
-  const user = (await currentUser(db)) || (await pickUser(db));
-  session.userName = user.name;
+  await ensureLogin(db);
   requestPersistentStorage();
 
   // ---- قاب
@@ -82,8 +92,11 @@ async function boot() {
       el.append(h('div', { class: 'empty' }, h('p', null, 'این صفحه وجود ندارد'), h('a', { class: 'btn primary', href: '#/' }, 'صفحه‌ی اصلی')));
       return;
     }
+    const user = await currentUser(db);
     const ctx = {
       db,
+      user,
+      isAdmin: !!user && user.role === 'admin',
       el,
       params: found.params,
       query,
@@ -112,6 +125,7 @@ async function boot() {
     }
   }
   window.addEventListener('hashchange', render);
+  setupAutoLock(db, () => render());
   if (!location.hash) location.hash = '/';
   await render();
   window.__tray = { db, go };

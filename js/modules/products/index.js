@@ -98,7 +98,19 @@ function itemsView(ctx, items, cats) {
     );
   }
   paint();
-  return h('div', null, searchBar((v) => ((q = v), paint()), 'جستجوی نام، کد، ابعاد...'), kindTabs, h('div', { class: 'form', style: { marginBottom: '10px' } }, catSel), listEl);
+  return h(
+    'div',
+    null,
+    searchBar((v) => ((q = v), paint()), 'جستجوی نام، کد، ابعاد...'),
+    kindTabs,
+    h(
+      'div',
+      { class: 'filter-row' },
+      catSel,
+      h('button', { class: 'btn ghost small', onclick: () => categoryForm(ctx, null, '', () => ctx.refresh()) }, '＋ دسته‌بندی جدید')
+    ),
+    listEl
+  );
 }
 
 // ---------------------------------------------------------------- دسته‌بندی‌ها
@@ -150,11 +162,10 @@ async function categoryForm(ctx, cat, parentId, redraw) {
       if (cat && wouldCycle(cats, cat.id, v.parentId)) return setError('parentId', 'نمیشه دسته را زیر خودش یا زیرمجموعه‌اش گذاشت');
       const dup = cats.find((c) => c.id !== (cat && cat.id) && (c.parentId || '') === (v.parentId || '') && c.name === v.name);
       if (dup) return setError('name', 'در همین سطح دسته‌ای با این نام هست');
-      if (cat) await t.update(cat.id, v);
-      else await t.create(v);
+      const rec = cat ? await t.update(cat.id, v) : await t.create(v);
       s.close();
       toast(cat ? 'ذخیره شد' : 'دسته‌بندی اضافه شد');
-      redraw();
+      redraw(rec);
     },
   });
   s = sheet({ title: cat ? 'ویرایش دسته‌بندی' : 'دسته‌بندی جدید', body: form });
@@ -305,6 +316,27 @@ async function formPage(ctx) {
       }
     },
   });
+
+  // افزودن سریع دسته‌بندی از داخل همین فرم
+  const catSelect = form.control('categoryId');
+  form.wrapper('categoryId').append(
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'btn ghost small',
+        style: { marginTop: '6px' },
+        onclick: () =>
+          categoryForm(ctx, null, '', async (rec) => {
+            if (!rec || !rec.id) return;
+            const fresh = await ctx.db.table(CATS).list();
+            catSelect.replaceChildren(...categoryOptions(fresh).map((o) => h('option', { value: o.value }, o.label)));
+            catSelect.value = rec.id;
+          }),
+      },
+      '＋ دسته‌بندی جدید'
+    )
+  );
 
   // با عوض شدن نوع، واحد پیشنهادی هم عوض بشه (فقط برای کالای جدید)
   if (!editing) {

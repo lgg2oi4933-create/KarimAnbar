@@ -69,3 +69,49 @@ export function matches(haystackParts, query) {
   const hay = normalizeText(haystackParts.filter(Boolean).join(' '));
   return q.split(' ').every((w) => hay.includes(w));
 }
+
+export function formatMoney(n) {
+  const s = formatNumber(Math.round(Number(n) || 0));
+  return s + ' ریال';
+}
+
+// عدد به حروف فارسی (برای جلوگیری از اشتباه در تعداد صفرها)
+const ONES = ['', 'یک', 'دو', 'سه', 'چهار', 'پنج', 'شش', 'هفت', 'هشت', 'نه', 'ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'شانزده', 'هفده', 'هجده', 'نوزده'];
+const TENS = ['', '', 'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود'];
+const HUNDREDS = ['', 'صد', 'دویست', 'سیصد', 'چهارصد', 'پانصد', 'ششصد', 'هفتصد', 'هشتصد', 'نهصد'];
+const SCALES = ['', 'هزار', 'میلیون', 'میلیارد', 'هزار میلیارد'];
+
+function below1000(n) {
+  const parts = [];
+  const h = Math.floor(n / 100);
+  const r = n % 100;
+  if (h) parts.push(HUNDREDS[h]);
+  if (r) {
+    if (r < 20) parts.push(ONES[r]);
+    else {
+      parts.push(TENS[Math.floor(r / 10)]);
+      if (r % 10) parts.push(ONES[r % 10]);
+    }
+  }
+  return parts.join(' و ');
+}
+
+export function numberToWords(value) {
+  let n = Math.floor(Math.abs(Number(value)));
+  if (!Number.isFinite(n) || n >= 1e15) return '';
+  if (n === 0) return 'صفر';
+  const groups = [];
+  while (n > 0) {
+    groups.push(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+  const parts = [];
+  for (let k = groups.length - 1; k >= 0; k--) {
+    const g = groups[k];
+    if (!g) continue;
+    let s = below1000(g);
+    if (k === 1 && g === 1) s = '';
+    parts.push((s ? s + ' ' : '') + SCALES[k]);
+  }
+  return parts.map((p) => p.trim()).join(' و ');
+}

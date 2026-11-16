@@ -1,23 +1,22 @@
-// ماژول تنظیمات: اطلاعات شرکت (لوگو)، کاربران، گزارش فعالیت، گوشی و ظاهر
+// ماژول تنظیمات: اطلاعات شرکت (لوگو، مالیات)، کاربران و رمزها، گزارش فعالیت، گوشی و ظاهر
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, confirmDialog, emptyState, kv, row, section, sheet, toast } from '../../ui/components.js';
-import { registerModule, tableLabel, fieldLabel } from '../../core/registry.js';
+import { registerModule, tableLabel, fieldLabel, moreItems } from '../../core/registry.js';
 import { session } from '../../core/session.js';
 import { toFaDigits, pad } from '../../core/util.js';
-import { toJalali, formatJalali } from '../../core/jalali.js';
+import { toJalali } from '../../core/jalali.js';
+import { hashPassword, validatePasswordText } from '../../core/crypto.js';
 import { requestPersistentStorage } from '../../core/storage.js';
 import { applyTheme } from '../../ui/theme.js';
+import { USER_ROLES, roleLabel, isAdmin, currentUser, ensureLogin, changeMyPasswordSheet, createRecoveryCode, showRecoveryCodeSheet, getRecovery } from '../auth/index.js';
 
-export const USER_ROLES = [
-  { value: 'admin', label: 'مدیر' },
-  { value: 'accountant', label: 'حسابدار' },
-];
-const roleLabel = (v) => (USER_ROLES.find((r) => r.value === v) || { label: v }).label;
-const APP_VERSION = '0.1.0 (مرحله ۱)';
+const APP_VERSION = '0.2.0 (مرحله ۲)';
+export const DEFAULT_TAX = 10;
 
 export async function getCompany(db) {
-  return (await db.table('settings').get('company')) || {};
+  const c = (await db.table('settings').get('company')) || {};
+  return { taxPercent: DEFAULT_TAX, ...c, taxPercent: c.taxPercent === undefined || c.taxPercent === null ? DEFAULT_TAX : c.taxPercent };
 }
 
 function fmtDateTime(iso) {
@@ -27,39 +26,18 @@ function fmtDateTime(iso) {
   return toFaDigits(`${j.jy}/${pad(j.jm)}/${pad(j.jd)}  ${pad(d.getHours())}:${pad(d.getMinutes())}`);
 }
 
-// ---------------------------------------------------------------- کاربر فعلی
-export async function pickUser(db, { dismissible = false } = {}) {
-  const users = (await db.table('users').list()).sort((a, b) => a.name.localeCompare(b.name, 'fa'));
-  return new Promise((resolve) => {
-    let s;
-    const choose = (u) => {
-      session.userId = u.id;
-      session.userName = u.name;
-      s.close();
-      resolve(u);
-    };
-    s = sheet({
-      title: 'چه کسی کار میکند؟',
-      dismissible,
-      className: 'login-list',
-      body: users.map((u) => row({ leading: icon('user'), title: u.name, subtitle: roleLabel(u.role), onclick: () => choose(u) })),
-    });
-  });
-}
-
-export async function currentUser(db) {
-  const id = session.userId;
-  if (!id) return null;
-  const u = await db.table('users').get(id);
-  return u && !u.deletedAt ? u : null;
+function adminOnly(ctx) {
+  if (isAdmin(ctx.user)) return false;
+  ctx.setBack('/more');
+  ctx.el.append(emptyState('user', 'این بخش فقط برای مدیر است'));
+  return true;
 }
 
 // ---------------------------------------------------------------- صفحه‌ی «بیشتر»
 async function morePage(ctx) {
   ctx.setTitle('بیشتر');
   ctx.setBack(null);
-  const { moreItems } = await import('../../core/registry.js');
-  const u = await currentUser(ctx.db);
+  const u = ctx.user;
   ctx.el.append(
     section(
       null,
@@ -73,18 +51,21 @@ async function morePage(ctx) {
           {
             class: 'btn ghost small',
             onclick: async () => {
-              await pickUser(ctx.db, { dismissible: true });
+              await ensureLogin(ctx.db, { force: true });
               ctx.refresh();
             },
           },
           'تغییر کاربر'
         )
-      )
+      ),
+      h('div', { class: 'btn-row pad-top' }, h('button', { class: 'btn ghost small', onclick: () => changeMyPasswordSheet(ctx.db, u, () => ctx.refresh()) }, 'تغییر رمز من'))
     ),
     h(
       'div',
       { class: 'list' },
-      moreItems().map((m) => row({ leading: icon(m.icon), title: m.label, subtitle: m.desc || '', onclick: () => ctx.go(m.path) }))
+      moreItems()
+        .filter((m) => !m.adminOnly || isAdmin(u))
+        .map((m) => row({ leading: icon(m.icon), title: m.label, subtitle: m.desc || '', onclick: () => ctx.go(m.path) }))
     )
   );
 }
@@ -93,6 +74,7 @@ async function morePage(ctx) {
 async function companyPage(ctx) {
   ctx.setTitle('اطلاعات شرکت');
   ctx.setBack('/more');
+  if (adminOnly(ctx)) return;
   const c = await getCompany(ctx.db);
   ctx.el.append(
     h('p', { class: 'muted' }, 'این اطلاعات روی فاکتورها و صورت‌حساب‌ها چاپ میشود.'),
@@ -107,11 +89,12 @@ async function companyPage(ctx) {
         { name: 'economicCode', label: 'کد اقتصادی', type: 'tel' },
         { name: 'nationalId', label: 'شناسه ملی', type: 'tel' },
         { name: 'postalCode', label: 'کد پستی', type: 'tel' },
+        { name: 'taxPercent', label: 'درصد مالیات پیش‌فرض فاکتور', type: 'number', min: 0, hint: 'روی هر فاکتور جداگانه قابل تغییر است. برای فاکتور بدون مالیات صفر بگذارید.' },
         { name: 'address', label: 'آدرس', type: 'textarea' },
         { name: 'invoiceNote', label: 'متن پایین فاکتور', type: 'textarea', hint: 'مثلاً شماره حساب یا شرایط پرداخت' },
       ],
       onSubmit: async (v) => {
-        await ctx.db.table('settings').upsert('company', v);
+        await ctx.db.table('settings').upsert('company', { ...v, taxPercent: v.taxPercent === null ? 0 : v.taxPercent });
         toast('ذخیره شد');
         ctx.go('/more');
       },
@@ -123,9 +106,9 @@ async function companyPage(ctx) {
 async function usersPage(ctx) {
   ctx.setTitle('کاربران');
   ctx.setBack('/more');
-  const t = ctx.db.table('users');
-  const users = await t.list();
-  const admins = users.filter((u) => u.role === 'admin');
+  if (adminOnly(ctx)) return;
+  const users = await ctx.db.table('users').list();
+  const hasRecovery = !!(await getRecovery(ctx.db));
   ctx.el.append(
     h(
       'div',
@@ -134,15 +117,29 @@ async function usersPage(ctx) {
         row({
           leading: icon('user'),
           title: u.name,
-          subtitle: roleLabel(u.role),
+          subtitle: `${roleLabel(u.role)} · ${u.pw ? 'رمز دارد' : 'رمز تعیین نشده'}`,
           meta: u.id === session.userId ? badge('کاربر فعلی', 'ok') : '',
           onclick: () => userForm(ctx, u),
         })
       )
     ),
-    h('div', { class: 'pad-top' }, h('button', { class: 'btn primary', onclick: () => userForm(ctx, null) }, 'افزودن کاربر'))
+    h('div', { class: 'pad-top' }, h('button', { class: 'btn primary', onclick: () => userForm(ctx, null) }, 'افزودن کاربر')),
+    section(
+      'کد بازیابی',
+      h('p', { class: 'muted' }, 'اگر همه‌ی مدیرها رمزشان را فراموش کنند، فقط با این کد میشود وارد شد. ساخت کد تازه، کد قبلی را باطل میکند.'),
+      h(
+        'button',
+        {
+          class: 'btn ghost',
+          onclick: async () => {
+            if (hasRecovery && !(await confirmDialog('کد قبلی باطل میشود. کد تازه ساخته شود؟', { okText: 'بساز' }))) return;
+            showRecoveryCodeSheet(await createRecoveryCode(ctx.db), () => ctx.refresh());
+          },
+        },
+        hasRecovery ? 'ساخت کد بازیابی تازه' : 'ساخت کد بازیابی'
+      )
+    )
   );
-  void admins;
 }
 
 function userForm(ctx, u) {
@@ -177,17 +174,25 @@ function userForm(ctx, u) {
       : [],
     fields: [
       { name: 'name', label: 'نام کاربر', required: true },
-      { name: 'role', label: 'نقش', type: 'choice', options: USER_ROLES },
+      { name: 'role', label: 'نقش', type: 'choice', options: USER_ROLES, hint: 'میتوانید چند مدیر داشته باشید؛ مثلاً یکی برای هر گوشی.' },
+      {
+        name: 'password',
+        label: u ? 'رمز جدید (برای تغییر)' : 'رمز اولیه (اختیاری)',
+        type: 'password',
+        hint: u ? 'اگر خالی بگذارید رمز فعلی میماند.' : 'اگر خالی بگذارید، کاربر در اولین ورود خودش رمز تعیین میکند.',
+        validate: (v) => validatePasswordText(v),
+      },
     ],
     onSubmit: async (v, { setError }) => {
       const all = await t.list();
       if (all.some((x) => x.id !== (u && u.id) && x.name === v.name)) return setError('name', 'کاربری با این نام هست');
-      if (u && u.role === 'admin' && v.role !== 'admin' && all.filter((x) => x.role === 'admin').length <= 1)
-        return setError('role', 'حداقل یک مدیر باید بماند');
+      if (u && u.role === 'admin' && v.role !== 'admin' && all.filter((x) => x.role === 'admin').length <= 1) return setError('role', 'حداقل یک مدیر باید بماند');
+      const { password, ...data } = v;
+      if (password) data.pw = await hashPassword(password);
       if (u) {
-        await t.update(u.id, v);
-        if (u.id === session.userId) session.userName = v.name;
-      } else await t.create(v);
+        await t.update(u.id, data);
+        if (u.id === session.userId) session.userName = data.name;
+      } else await t.create(data);
       s.close();
       ctx.refresh();
     },
@@ -202,6 +207,7 @@ const ACTION_TONE = { create: 'ok', update: '', delete: 'danger', restore: 'warn
 async function activityPage(ctx) {
   ctx.setTitle('گزارش فعالیت');
   ctx.setBack('/more');
+  if (adminOnly(ctx)) return;
   const log = (await ctx.db.adapter.getAll('activity_log')).sort((a, b) => (a.at < b.at ? 1 : -1));
   const users = [...new Set(log.map((l) => l.userName).filter(Boolean))];
   let who = '';
@@ -235,11 +241,25 @@ async function activityPage(ctx) {
 }
 
 function diffNodes(changes) {
-  const show = (v) => (v === null || v === undefined || v === '' ? '—' : Array.isArray(v) ? v.join('، ') : typeof v === 'number' ? toFaDigits(v) : String(v));
+  const show = (v) => {
+    if (v === null || v === undefined || v === '') return '—';
+    if (Array.isArray(v)) return v.length && typeof v[0] === 'object' ? `${toFaDigits(v.length)} ردیف` : v.join('، ');
+    if (typeof v === 'number') return toFaDigits(v);
+    if (typeof v === 'object') return '…';
+    return String(v);
+  };
   return Object.entries(changes).map(([k, c]) => h('div', { class: 'diff' }, `${fieldLabel(k)}: `, h('del', null, show(c.from)), ' ← ', h('ins', null, show(c.to))));
 }
 
 // ---------------------------------------------------------------- گوشی و ظاهر
+const LOCK_OPTIONS = [
+  { value: '0', label: 'هیچ‌وقت' },
+  { value: '5', label: '۵ دقیقه' },
+  { value: '30', label: '۳۰ دقیقه' },
+  { value: '120', label: '۲ ساعت' },
+  { value: '600', label: '۱۰ ساعت' },
+];
+
 async function devicePage(ctx) {
   ctx.setTitle('گوشی و ظاهر');
   ctx.setBack('/more');
@@ -266,6 +286,19 @@ async function devicePage(ctx) {
           session.theme = v.theme;
           applyTheme();
           toast('اعمال شد');
+        },
+      })
+    ),
+    section(
+      'قفل خودکار',
+      h('p', { class: 'muted' }, 'بعد از این مدت بی‌کاری، برای ادامه دوباره رمز خواسته میشود. این تنظیم فقط برای همین گوشی است.'),
+      buildForm({
+        values: { lock: String(session.lockMinutes) },
+        submitText: 'ذخیره',
+        fields: [{ name: 'lock', label: 'قفل بعد از', type: 'select', options: LOCK_OPTIONS }],
+        onSubmit: async (v) => {
+          session.lockMinutes = Number(v.lock);
+          toast('ذخیره شد');
         },
       })
     ),
@@ -309,15 +342,15 @@ export function registerSettings() {
     title: 'تنظیمات',
     tables: ['settings', 'users'],
     tableLabels: { settings: 'تنظیمات', users: 'کاربران' },
-    fieldLabels: { role: 'نقش', logo: 'لوگو', phone: 'تلفن', economicCode: 'کد اقتصادی', postalCode: 'کد پستی', invoiceNote: 'متن پایین فاکتور' },
+    fieldLabels: { role: 'نقش', logo: 'لوگو', phone: 'تلفن', economicCode: 'کد اقتصادی', postalCode: 'کد پستی', invoiceNote: 'متن پایین فاکتور', taxPercent: 'درصد مالیات' },
     nav: { order: 90, label: 'بیشتر', icon: 'grid', path: '/more' },
     more: [
-      { order: 10, label: 'اطلاعات شرکت', desc: 'نام، لوگو و مشخصات روی فاکتور', icon: 'building', path: '/settings/company' },
-      { order: 20, label: 'کاربران', desc: 'مدیر و حسابدار', icon: 'users', path: '/settings/users' },
-      { order: 80, label: 'گزارش فعالیت', desc: 'چه کسی چه کاری کرده', icon: 'activity', path: '/settings/activity' },
-      { order: 90, label: 'گوشی و ظاهر', desc: 'پوسته، حرف گوشی در کدها، ذخیره‌سازی', icon: 'smartphone', path: '/settings/device' },
+      { order: 10, label: 'اطلاعات شرکت', desc: 'نام، لوگو، مالیات و مشخصات روی فاکتور', icon: 'building', path: '/settings/company', adminOnly: true },
+      { order: 20, label: 'کاربران', desc: 'مدیر، حسابدار و رمزها', icon: 'users', path: '/settings/users', adminOnly: true },
+      { order: 80, label: 'گزارش فعالیت', desc: 'چه کسی چه کاری کرده', icon: 'activity', path: '/settings/activity', adminOnly: true },
+      { order: 90, label: 'گوشی و ظاهر', desc: 'پوسته، قفل خودکار، حرف گوشی در کدها', icon: 'smartphone', path: '/settings/device' },
     ],
-    // اولین اجرا: دو کاربر پیش‌فرض
+    // اولین اجرا: دو کاربر پیش‌فرض (رمز را خودشان در اولین ورود تعیین میکنند)
     init: async (db) => {
       const t = db.table('users');
       if (!(await t.list({ includeDeleted: true })).length) {
@@ -335,4 +368,4 @@ export function registerSettings() {
   });
 }
 
-export { formatJalali };
+export { currentUser };
