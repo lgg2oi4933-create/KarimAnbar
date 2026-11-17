@@ -6,7 +6,7 @@ import { partyPicker } from '../../ui/pickers.js';
 import { registerModule } from '../../core/registry.js';
 import { matches, toFaDigits, formatMoney } from '../../core/util.js';
 import { formatJalali, todayIso, weekdayName } from '../../core/jalali.js';
-import { invoiceTotals, indexById, paidForInvoice } from '../../core/finance.js';
+import { invoiceTotals, indexById, paidForInvoice, isPaymentEffective } from '../../core/finance.js';
 import { partyName } from '../parties/model.js';
 import { STATUS_OPTIONS } from '../checks/model.js';
 import { METHODS, DIRS, methodLabel, dirLabel, rolesForDir } from './model.js';
@@ -24,12 +24,21 @@ async function listPage(ctx) {
   let dir = ctx.query.dir === 'in' || ctx.query.dir === 'out' ? ctx.query.dir : 'all';
   let q = '';
   const listEl = h('div', { class: 'list' });
+  const totalsEl = h('div', { class: 'pay-totals' });
 
   const paint = () => {
     const items = payments
       .filter((p) => dir === 'all' || p.direction === dir)
       .filter((p) => matches([partyName(partiesById.get(p.partyId)), p.code, methodLabel(p.method), formatJalali(p.date)], q))
       .sort((a, b) => (a.date === b.date ? (a.createdAt < b.createdAt ? 1 : -1) : a.date < b.date ? 1 : -1));
+    const sum = (d, m) => items.filter((p) => p.direction === d && p.method === m && isPaymentEffective(p, checksById)).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+    const cell = (d, m, label) => h('div', { class: 'stat' }, h('span', { class: 'muted' }, label), h('b', { class: d === 'in' ? 'amount-credit' : 'amount-debit' }, formatMoney(sum(d, m))));
+    totalsEl.replaceChildren(
+      h('div', { class: 'split' }, cell('in', 'cash', 'نقد دریافتی'), cell('out', 'cash', 'نقد پرداختی')),
+      h('div', { class: 'split' }, cell('in', 'check', 'چک دریافتی'), cell('out', 'check', 'چک پرداختی')),
+      h('div', { class: 'split' }, cell('in', 'transfer', 'حواله دریافتی'), cell('out', 'transfer', 'حواله پرداختی')),
+      h('p', { class: 'muted' }, 'جمع‌ها بر اساس فیلتر و جستجوی پایین است؛ چک‌های برگشتی حساب نمیشوند. چک پرداختی شامل چک‌های خرج‌شده هم هست.')
+    );
     listEl.replaceChildren(
       ...(items.length
         ? items.map((p) => {
@@ -55,6 +64,7 @@ async function listPage(ctx) {
   ctx.el.append(
     searchBar((v) => ((q = v), paint()), 'جستجوی نام، کد، تاریخ...'),
     tabs([{ value: 'all', label: 'همه' }, ...DIRS.map((d) => ({ value: d.value, label: d.label }))], dir, (v) => ((dir = v), paint())),
+    totalsEl,
     listEl,
     fab(() => ctx.go(`/payments/new?dir=${dir === 'out' ? 'out' : 'in'}`), 'ثبت جدید')
   );

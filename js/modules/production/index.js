@@ -147,7 +147,7 @@ function lotRowsField(lots, products, batches, ownBatchId, init) {
 function openStage(ctx, batch, key, { title, fields, defaults, wire, build, validate, extra }) {
   let s;
   const form = buildForm({
-    values: batch[key] || defaults,
+    values: batch[key] && !batch[key].skipped ? batch[key] : defaults,
     submitText: 'ثبت مرحله',
     onCancel: () => s.close(),
     extraActions: batch[key]
@@ -275,7 +275,7 @@ function pressStage(ctx, b) {
     title: 'پرس و تولید نهایی',
     defaults: { inKg },
     fields: [
-      { name: 'inKg', label: 'وزن ورودی به پرس (کیلو)', type: 'number', min: 0, required: true },
+      { name: 'inKg', label: 'وزن ورودی به پرس (کیلو)', type: 'number', min: 0 },
       { name: 'outKg', label: 'وزن سینی تولیدشده (کیلو)', type: 'number', min: 0, required: true, hint: 'همین مقدار به موجودی سینی انبار اضافه میشود.' },
       WASTE_FIELDS[1],
       { name: 'pieces', label: 'تعداد سینی (اختیاری)', type: 'number', min: 0 },
@@ -297,16 +297,30 @@ async function detailPage(ctx) {
     h('button', { class: 'icon-btn', 'aria-label': 'ویرایش', onclick: () => ctx.go(`/production/${b.id}/edit`) }, icon('edit')),
     h('button', { class: 'icon-btn danger', 'aria-label': 'حذف', onclick: () => removeBatch(ctx, b) }, icon('trash')),
   ]);
-  const [tray, lots, products, sub] = await Promise.all([ctx.db.table('products').get(b.trayProductId), ctx.db.table('lots').list(), ctx.db.table('products').list({ includeDeleted: true }), b.tape ? ctx.db.table('parties').get(b.tape.partyId) : null]);
+  const [tray, lots, products, sub] = await Promise.all([ctx.db.table('products').get(b.trayProductId), ctx.db.table('lots').list(), ctx.db.table('products').list({ includeDeleted: true }), b.tape && b.tape.partyId ? ctx.db.table('parties').get(b.tape.partyId) : null]);
   const lotsById = new Map(lots.map((l) => [l.id, l]));
   const pName = (id) => (products.find((p) => p.id === id) || {}).name || '';
   const sm = batchSummary(b, lotsById);
-  const stageCard = (key, title, lines, onEdit) =>
-    section(
+  const skipStage = async (key) => {
+    await ctx.db.table(T).update(b.id, { [key]: { skipped: true } });
+    toast('مرحله رد شد');
+    ctx.refresh();
+  };
+  const stageCard = (key, title, lines, onEdit, canSkip = true) => {
+    const st = b[key];
+    const skipped = st && st.skipped;
+    return section(
       title,
-      b[key] ? h('div', null, ...lines.filter(Boolean)) : h('p', { class: 'muted' }, 'ثبت نشده'),
-      h('div', { class: 'btn-row pad-top' }, h('button', { class: b[key] ? 'btn ghost small' : 'btn primary small', onclick: onEdit }, b[key] ? 'ویرایش' : 'ثبت این مرحله'))
+      skipped ? h('p', { class: 'muted' }, 'رد شد (بدون ثبت)') : st ? h('div', null, ...lines.filter(Boolean)) : h('p', { class: 'muted' }, 'ثبت نشده'),
+      h(
+        'div',
+        { class: 'btn-row pad-top' },
+        h('button', { class: st && !skipped ? 'btn ghost small' : 'btn primary small', onclick: onEdit }, st && !skipped ? 'ویرایش' : 'ثبت این مرحله'),
+        !st && canSkip ? h('button', { class: 'btn ghost small', onclick: () => skipStage(key) }, 'رد کردن') : null,
+        skipped ? h('button', { class: 'btn ghost small', onclick: async () => { await ctx.db.table(T).update(b.id, { [key]: null }); ctx.refresh(); } }, 'برگرداندن') : null
+      )
     );
+  };
   const g = b.glue || {};
   const c = b.cut || {};
   const t = b.tape || {};
@@ -328,6 +342,7 @@ async function detailPage(ctx) {
       kv('بازده', sm.yieldPct == null ? '' : `${toFaDigits(sm.yieldPct)}٪`),
       kv('اجرت برون‌سپاری', sm.fee ? formatMoney(sm.fee) : '')
     ),
+    !b.press ? h('button', { class: 'btn primary', style: { width: '100%', marginBottom: '12px' }, onclick: () => quickFinish(ctx, b) }, 'تولید شد (ثبت سریع، رد کردن مراحل)') : null,
     stageCard('glue', '۱) چسب‌کاری و خشک‌کردن', [
       kv('لایه‌ها', `${toFaDigits(g.layers || '')} ورق`),
       ...(g.lots || []).map((x) => { const l = lotsById.get(x.lotId); return kv(l ? `لات ${l.code}` : 'لات حذف‌شده', h('a', { class: 'link', href: l ? `#/inventory/lots/${l.id}` : '#' }, kg(x.kg))); }),
@@ -347,8 +362,32 @@ async function detailPage(ctx) {
       tapeFee(b) ? kv('اجرت قابل پرداخت', formatMoney(tapeFee(b))) : null,
       t.note ? kv('توضیحات', t.note) : null,
     ], () => tapeStage(ctx, b)),
-    stageCard('press', '۴) پرس و تولید نهایی', [kv('ورودی', kg(p.inKg)), kv('سینی تولیدشده', kg(p.outKg)), p.pieces ? kv('تعداد', toFaDigits(p.pieces)) : null, kv('ضایعات', kg(p.wasteKg)), p.note ? kv('توضیحات', p.note) : null], () => pressStage(ctx, b))
+    stageCard('press', '۴) پرس و تولید نهایی', [kv('ورودی', kg(p.inKg)), kv('سینی تولیدشده', kg(p.outKg)), p.pieces ? kv('تعداد', toFaDigits(p.pieces)) : null, kv('ضایعات', kg(p.wasteKg)), p.note ? kv('توضیحات', p.note) : null], () => pressStage(ctx, b), false)
   );
+}
+
+// ثبت سریع: فقط وزن سینی تولیدشده؛ مراحل ثبت‌نشده «رد شده» میشوند
+function quickFinish(ctx, b) {
+  let s;
+  const form = buildForm({
+    values: {},
+    submitText: 'تولید شد',
+    onCancel: () => s.close(),
+    fields: [
+      { name: 'outKg', label: 'وزن سینی تولیدشده (کیلو)', type: 'number', min: 0, required: true, hint: 'همین مقدار به موجودی سینی اضافه میشود. مراحل ثبت‌نشده رد میشوند و بعداً هم میتوانید کامل‌شان کنید.' },
+      { name: 'pieces', label: 'تعداد سینی (اختیاری)', type: 'number', min: 0 },
+    ],
+    onSubmit: async (v, { setError }) => {
+      if (!(v.outKg > 0)) return setError('outKg', 'وزن را وارد کنید');
+      const patch = { press: { inKg: 0, outKg: v.outKg, wasteKg: 0, pieces: v.pieces || 0 } };
+      for (const k of ['glue', 'cut', 'tape']) if (!b[k]) patch[k] = { skipped: true };
+      await ctx.db.table(T).update(b.id, patch);
+      s.close();
+      toast('ثبت شد');
+      ctx.refresh();
+    },
+  });
+  s = sheet({ title: 'تولید شد', body: form });
 }
 
 async function removeBatch(ctx, b) {

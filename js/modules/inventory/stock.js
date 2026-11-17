@@ -97,7 +97,7 @@ export function stockOf(productId, data) {
 
 // ---- لات‌ها: هر ردیف ورق در فاکتور خرید = یک لات (با کد خودکار قابل ویرایش)
 export async function syncLots(db) {
-  const [invoices, products, lots, batches] = await Promise.all([db.table('invoices').list(), db.table('products').list(), db.table('lots').list({ includeDeleted: true }), db.table('prod_batches').list()]);
+  const [invoices, products, lots, batches, moves] = await Promise.all([db.table('invoices').list(), db.table('products').list(), db.table('lots').list({ includeDeleted: true }), db.table('prod_batches').list(), db.table('stock_moves').list()]);
   const pById = new Map(products.map((p) => [p.id, p]));
   const byId = new Map(lots.map((l) => [l.id, l]));
   const t = db.table('lots');
@@ -116,6 +116,17 @@ export async function syncLots(db) {
       if (!ex) await t.create(src, { id, prefix: 'LOT', silent: true });
       else if (ex.deletedAt || ex.kg !== src.kg || ex.date !== src.date || ex.productId !== src.productId || ex.orphan || ex.invoiceId !== src.invoiceId) await t.update(id, { ...src, deletedAt: null }, { silent: true });
     }
+  }
+  // ورود دستی ورق هم لات می‌سازد تا در تولید قابل انتخاب باشد
+  for (const m of moves) {
+    const p = pById.get(m.productId);
+    if (m.direction !== 'in' || !p || p.kind !== 'sheet') continue;
+    const id = `lot_m_${m.id}`;
+    wanted.add(id);
+    const src = { moveId: m.id, productId: m.productId, kg: Number(m.qty) || 0, date: m.date, orphan: false };
+    const ex = byId.get(id);
+    if (!ex) await t.create(src, { id, prefix: 'LOT', silent: true });
+    else if (ex.deletedAt || ex.kg !== src.kg || ex.date !== src.date || ex.productId !== src.productId || ex.orphan) await t.update(id, { ...src, deletedAt: null }, { silent: true });
   }
   for (const l of lots) {
     if (l.deletedAt || wanted.has(l.id)) continue;

@@ -147,8 +147,8 @@ async function lotsPage(ctx) {
       .sort((a, b) => (a.l.date < b.l.date ? 1 : -1));
     listEl.replaceChildren(
       ...(items.length
-        ? items.map(({ l, rem }) => row({ leading: icon('box'), title: `${l.code} · ${(pById.get(l.productId) || {}).name || ''}`, subtitle: `خرید ${formatJalali(l.date)} · ${formatNumber(l.kg, { decimals: 3 })} کیلو`, meta: h('b', { class: rem < 0 ? 'amount-debit' : '' }, `${formatNumber(rem, { decimals: 3 })} کیلو مانده`), onclick: () => ctx.go(`/inventory/lots/${l.id}`) }))
-        : [emptyState('box', lots.length ? 'لات بازی نیست' : 'با ثبت فاکتور خرید ورق، لات‌ها خودکار ساخته میشوند')])
+        ? items.map(({ l, rem }) => row({ leading: icon('box'), title: `${l.code} · ${(pById.get(l.productId) || {}).name || ''}`, subtitle: `${l.moveId ? 'ورود دستی' : 'خرید'} ${formatJalali(l.date)} · ${formatNumber(l.kg, { decimals: 3 })} کیلو`, meta: h('b', { class: rem < 0 ? 'amount-debit' : '' }, `${formatNumber(rem, { decimals: 3 })} کیلو مانده`), onclick: () => ctx.go(`/inventory/lots/${l.id}`) }))
+        : [emptyState('box', lots.length ? 'لات بازی نیست' : 'با ثبت فاکتور خرید یا ورود دستی ورق، لات‌ها خودکار ساخته میشوند')])
     );
   };
   void invoices; void parties;
@@ -162,7 +162,7 @@ async function lotDetail(ctx) {
   const lot = await ctx.db.table('lots').get(ctx.params.id);
   if (!lot || lot.deletedAt) return void ctx.el.append(emptyState('box', 'این لات پیدا نشد'));
   ctx.setTitle(`لات ${lot.code}`);
-  const [product, inv, batches] = await Promise.all([ctx.db.table('products').get(lot.productId), ctx.db.table('invoices').get(lot.invoiceId), ctx.db.table('prod_batches').list()]);
+  const [product, inv, batches] = await Promise.all([ctx.db.table('products').get(lot.productId), lot.invoiceId ? ctx.db.table('invoices').get(lot.invoiceId) : null, ctx.db.table('prod_batches').list()]);
   const party = inv ? await ctx.db.table('parties').get(inv.partyId) : null;
   const uses = lotUsage(lot.id, batches);
   const rem = lotRemaining(lot, batches);
@@ -174,7 +174,7 @@ async function lotDetail(ctx) {
       lot.orphan ? h('p', { class: 'muted' }, 'فاکتور یا ردیف خرید این لات حذف شده، ولی چون در تولید مصرف شده سابقه‌اش مانده است.') : null,
       kv('کد لات', lot.code),
       kv('ورق', product ? product.name : ''),
-      kv('فاکتور خرید', inv ? h('a', { class: 'link', href: `#/invoices/${inv.id}` }, inv.code) : ''),
+      lot.moveId ? kv('منبع', 'ورود دستی به انبار') : kv('فاکتور خرید', inv ? h('a', { class: 'link', href: `#/invoices/${inv.id}` }, inv.code) : ''),
       kv('تأمین‌کننده', party && partyName(party)),
       kv('تاریخ خرید', formatJalali(lot.date)),
       kv('وزن خرید', `${formatNumber(lot.kg, { decimals: 3 })} کیلو`),
