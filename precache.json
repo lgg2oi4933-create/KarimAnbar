@@ -1,11 +1,12 @@
 {
-  "version": "78a72a1739",
+  "version": "45b86ca2d8",
   "files": [
     "./",
     "./index.html",
     "./manifest.webmanifest",
     "./css/app.css",
     "./js/app.js",
+    "./js/core/backup.js",
     "./js/core/crypto.js",
     "./js/core/events.js",
     "./js/core/finance.js",
@@ -17,6 +18,7 @@
     "./js/core/storage.js",
     "./js/core/util.js",
     "./js/modules/auth/index.js",
+    "./js/modules/backup/index.js",
     "./js/modules/checks/index.js",
     "./js/modules/checks/model.js",
     "./js/modules/home/index.js",

@@ -20,6 +20,7 @@ import { registerChecks } from './modules/checks/index.js';
 import { registerLedger } from './modules/ledger/index.js';
 import { registerHr } from './modules/hr/index.js';
 import { registerReports } from './modules/reports/index.js';
+import { registerBackup } from './modules/backup/index.js';
 import { registerInventory } from './modules/inventory/index.js';
 import { registerProduction } from './modules/production/index.js';
 
@@ -36,6 +37,7 @@ registerInventory();
 registerProduction();
 registerHr();
 registerReports();
+registerBackup();
 registerSettings();
 
 async function boot() {

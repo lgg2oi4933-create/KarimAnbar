@@ -11,7 +11,7 @@ import { requestPersistentStorage } from '../../core/storage.js';
 import { applyTheme } from '../../ui/theme.js';
 import { USER_ROLES, roleLabel, isAdmin, currentUser, ensureLogin, changeMyPasswordSheet, createRecoveryCode, showRecoveryCodeSheet, getRecovery } from '../auth/index.js';
 
-const APP_VERSION = '0.2.0 (مرحله ۲)';
+const APP_VERSION = '0.5.0 (مرحله ۵)';
 export const DEFAULT_TAX = 10;
 
 export async function getCompany(db) {
@@ -354,8 +354,8 @@ export function registerSettings() {
     init: async (db) => {
       const t = db.table('users');
       if (!(await t.list({ includeDeleted: true })).length) {
-        await t.create({ name: 'مدیر', role: 'admin' }, { silent: true });
-        await t.create({ name: 'حسابدار', role: 'accountant' }, { silent: true });
+        await t.create({ name: 'مدیر', role: 'admin' }, { silent: true, id: 'user_seed_admin' });
+        await t.create({ name: 'حسابدار', role: 'accountant' }, { silent: true, id: 'user_seed_accountant' });
       }
     },
     routes: [
