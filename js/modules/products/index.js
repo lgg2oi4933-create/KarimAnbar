@@ -243,6 +243,7 @@ async function detailPage(ctx) {
       h('div', null, badge(kindInfo(p.kind).label), badge(p.code, 'code')),
       kv('دسته‌بندی', p.categoryId ? pathNames(cats, p.categoryId) : ''),
       kv('واحد', unitLabel(p.unit)),
+      kv('حداقل موجودی', p.minStock ? toFaDigits(p.minStock) : ''),
       kv('طول (سانتی‌متر)', p.length ? toFaDigits(p.length) : ''),
       kv('عرض (سانتی‌متر)', p.width ? toFaDigits(p.width) : ''),
       kv('توضیحات', p.note)
@@ -292,6 +293,7 @@ async function formPage(ctx) {
       { name: 'name', label: 'نام کالا', hint: 'برای ورق و سینی اگر خالی بگذارید از روی ابعاد ساخته میشود (مثلاً «سینی ۲۰×۳۰»).' },
       { name: 'unit', label: 'واحد اصلی', type: 'select', options: UNITS },
       { name: 'categoryId', label: 'دسته‌بندی', type: 'select', options: categoryOptions(cats) },
+      { name: 'minStock', label: 'حداقل موجودی (برای هشدار)', type: 'number', min: 0, hint: 'اگر موجودی از این مقدار کمتر شد در صفحه‌ی خانه هشدار میدهد. خالی = بدون هشدار.' },
       { name: 'code', label: 'کد کالا', dir: 'ltr', placeholder: 'خودکار ساخته میشود', hint: 'اگر خالی بگذارید خودکار ساخته میشود؛ قابل ویرایش است.' },
       { name: 'note', label: 'توضیحات', type: 'textarea' },
     ],
@@ -359,7 +361,7 @@ export function registerProducts() {
     title: 'کالاها',
     tables: [ITEMS, CATS],
     tableLabels: { products: 'کالاها', categories: 'دسته‌بندی‌ها' },
-    fieldLabels: { kind: 'نوع', unit: 'واحد', length: 'طول', width: 'عرض', categoryId: 'دسته‌بندی', parentId: 'زیرمجموعه‌ی', name: 'نام' },
+    fieldLabels: { minStock: 'حداقل موجودی', kind: 'نوع', unit: 'واحد', length: 'طول', width: 'عرض', categoryId: 'دسته‌بندی', parentId: 'زیرمجموعه‌ی', name: 'نام' },
     nav: { order: 30, label: 'کالاها', icon: 'box', path: '/products' },
     home: {
       order: 30,

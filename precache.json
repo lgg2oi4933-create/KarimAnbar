@@ -1,5 +1,5 @@
 {
-  "version": "13a41e6646",
+  "version": "78a72a1739",
   "files": [
     "./",
     "./index.html",
@@ -36,6 +36,8 @@
     "./js/modules/products/index.js",
     "./js/modules/products/model.js",
     "./js/modules/products/tree.js",
+    "./js/modules/reports/calc.js",
+    "./js/modules/reports/index.js",
     "./js/modules/settings/index.js",
     "./js/ui/components.js",
     "./js/ui/dom.js",

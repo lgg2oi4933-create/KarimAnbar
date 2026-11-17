@@ -19,6 +19,7 @@ import { registerPayments } from './modules/payments/index.js';
 import { registerChecks } from './modules/checks/index.js';
 import { registerLedger } from './modules/ledger/index.js';
 import { registerHr } from './modules/hr/index.js';
+import { registerReports } from './modules/reports/index.js';
 import { registerInventory } from './modules/inventory/index.js';
 import { registerProduction } from './modules/production/index.js';
 
@@ -34,6 +35,7 @@ registerLedger();
 registerInventory();
 registerProduction();
 registerHr();
+registerReports();
 registerSettings();
 
 async function boot() {
