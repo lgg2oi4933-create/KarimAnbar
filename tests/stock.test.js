@@ -1,41 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { movementsFor, stockOf, lotRemaining, batchSummary, tapeFee } from '../js/modules/inventory/stock.js';
+import { movementsFor, stockOf, runsFrom, runTotals, reasonLabel } from '../js/modules/inventory/stock.js';
 
-const lot = { id: 'L1', code: 'LOT-A0001', productId: 'sheet', kg: 1000 };
-const lotsById = new Map([[lot.id, lot]]);
-const batch = {
-  id: 'B1', code: 'B-A0001', date: '2026-11-10', trayProductId: 'tray',
-  glue: { lots: [{ lotId: 'L1', kg: 400 }], glueProductId: 'glue', glueKg: 20, outKg: 400, wasteKg: 20 },
-  cut: { inKg: 400, outKg: 380, wasteKg: 20 },
-  tape: { sentKg: 380, returnedKg: 378, damagedKg: 8, feePerKg: 10000, tapeProductId: 'tape', tapePieces: 500, deductDamaged: 'yes' },
-  press: { inKg: 370, outKg: 360, wasteKg: 10 },
-};
 const data = {
   invoices: [
-    { id: 'I1', type: 'purchase', code: 'PI-1', date: '2026-11-01', lines: [{ productId: 'sheet', qty: 1000 }, { productId: 'tape', qty: 2000 }] },
+    { id: 'I1', type: 'purchase', code: 'PI-1', date: '2026-11-01', lines: [{ productId: 'sheet', qty: 1000 }, { productId: 'svc', qty: 300 }] },
     { id: 'I2', type: 'sale', code: 'SI-1', date: '2026-11-12', lines: [{ productId: 'tray', qty: 100 }] },
   ],
-  moves: [{ id: 'M1', productId: 'sheet', direction: 'out', qty: 50, date: '2026-11-02', reason: 'damage' }],
-  batches: [batch],
-  lotsById,
+  moves: [
+    { id: 'M1', productId: 'sheet', direction: 'out', qty: 400, date: '2026-11-02', reason: 'consume', runTag: '7' },
+    { id: 'M2', productId: 'tray', direction: 'in', qty: 360, date: '2026-11-03', reason: 'produced', runTag: '7' },
+    { id: 'M3', productId: 'waste', direction: 'in', qty: 20, date: '2026-11-03', reason: 'cutwaste', runTag: '7' },
+    { id: 'M4', productId: 'sheet', direction: 'out', qty: 5, date: '2026-11-04', reason: 'damage', deletedAt: 'x' },
+  ],
 };
 
-test('stock: ورق = خرید - خروج دستی - مصرف دسته', () => {
-  assert.equal(stockOf('sheet', data), 1000 - 50 - 400);
-  assert.equal(stockOf('tape', data), 2000 - 500);
-  assert.equal(stockOf('glue', data), -20);
-  assert.equal(stockOf('tray', data), 360 - 100);
+test('stock: فقط فاکتور و ورود/خروج دستی', () => {
+  assert.equal(stockOf('sheet', data), 600);
+  assert.equal(stockOf('tray', data), 260);
+  assert.equal(stockOf('waste', data), 20);
 });
-test('stock: باقی‌مانده‌ی لات و ردیابی', () => {
-  assert.equal(lotRemaining(lot, [batch]), 600);
-  assert.equal(movementsFor('sheet', data).length, 3);
+test('stock: کاردکس مرتب و با مانده', () => {
+  const rows = movementsFor('sheet', data);
+  assert.deepEqual(rows.map((r) => r.balance), [1000, 600]);
+  assert.match(rows[1].desc, /مصرف در تولید/);
 });
-test('stock: اجرت برون‌سپاری و ضایعات', () => {
-  assert.equal(tapeFee(batch), (378 - 8) * 10000);
-  const s = batchSummary(batch, lotsById);
-  assert.equal(s.lotKg, 400);
-  assert.equal(s.finalKg, 360);
-  // 20 + 20 + (8 damaged + 2 loss) + 10
-  assert.equal(s.waste, 60);
+test('stock: شماره تولید گروه‌بندی میشود', () => {
+  const runs = runsFrom(data.moves);
+  assert.equal(runs.size, 1);
+  const t = runTotals(runs.get('7'));
+  assert.equal(t.find((x) => x.productId === 'sheet').out, 400);
+  assert.equal(t.find((x) => x.productId === 'tray').in, 360);
+});
+test('stock: برچسب علت‌ها', () => {
+  assert.equal(reasonLabel('produced'), 'تولید شده');
 });

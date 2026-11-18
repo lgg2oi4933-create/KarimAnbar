@@ -13,6 +13,28 @@ export function invoiceTotals(inv) {
   return { subtotal, discount, taxable, tax, total: taxable + tax };
 }
 
+// سود فاکتور فروش از «قیمت تمام‌شده»ی واردشده؛ بعد از تخفیف و قبل از مالیات
+export function invoiceProfit(inv) {
+  const t = invoiceTotals(inv);
+  const factor = t.subtotal > 0 ? t.taxable / t.subtotal : 1;
+  let revenue = 0;
+  let cost = 0;
+  let missing = 0;
+  const lines = (inv.lines || []).map((l) => {
+    const has = l.unitCost != null && !Number.isNaN(Number(l.unitCost));
+    const lineRevenue = Math.round(lineAmount(l) * factor);
+    if (!has) {
+      missing++;
+      return { line: l, revenue: lineRevenue, cost: null, profit: null };
+    }
+    const c = Math.round((Number(l.qty) || 0) * Number(l.unitCost));
+    revenue += lineRevenue;
+    cost += c;
+    return { line: l, revenue: lineRevenue, cost: c, profit: lineRevenue - c };
+  });
+  return { revenue, cost, profit: revenue - cost, missing, lines };
+}
+
 // پرداختی که چکش برگشت خورده اثری در حساب ندارد (برای دریافت، چک خرج‌شده‌ی برگشتی هم همین‌طور)
 export function isPaymentEffective(p, checksById) {
   if (p.deletedAt) return false;

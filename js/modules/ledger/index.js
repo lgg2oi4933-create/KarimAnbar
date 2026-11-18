@@ -99,7 +99,7 @@ async function statementPage(ctx) {
                     r.credit ? h('div', { class: 'amount-debit' }, `${formatNumber(r.credit)} بستانکار`) : null,
                     h('small', { class: 'muted' }, `مانده ${balanceText(r.balance)}`)
                   ),
-                  onclick: r.refType ? () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : r.refType === 'batch' ? 'production' : 'payments'}/${r.refId}`) : null,
+                  onclick: r.refType ? () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : 'payments'}/${r.refId}`) : null,
                   trailing: r.refType ? undefined : h('span'),
                 })
               )

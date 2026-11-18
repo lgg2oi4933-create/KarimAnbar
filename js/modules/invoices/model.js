@@ -10,8 +10,8 @@ export const TYPES = [
   { value: 'purchase', label: 'خرید' },
 ];
 export const typeLabel = (v) => (TYPES.find((t) => t.value === v) || { label: v }).label;
-export const partyRoleFor = (type) => (type === 'sale' ? ['customer'] : ['supplier']);
-export const kindsFor = (type) => (type === 'sale' ? ['tray', 'other'] : ['sheet', 'glue', 'tape', 'other']);
+export const partyRoleFor = (type) => (type === 'sale' ? ['customer'] : ['supplier', 'subcontractor']);
+export const kindsFor = (type) => (type === 'sale' ? ['tray', 'waste', 'other'] : ['sheet', 'glue', 'tape', 'waste', 'service', 'other']);
 
 // آخرین قیمتی که برای این کالا در همین نوع فاکتور زده شده
 export async function lastPrice(db, type, productId) {
@@ -19,6 +19,16 @@ export async function lastPrice(db, type, productId) {
   for (const inv of list) {
     const l = (inv.lines || []).find((x) => x.productId === productId && x.price != null);
     if (l) return l.price;
+  }
+  return null;
+}
+
+// آخرین قیمت تمام‌شده‌ی واردشده برای این کالا در فاکتور فروش
+export async function lastCost(db, productId) {
+  const list = (await db.table('invoices').list()).filter((i) => i.type === 'sale').sort((a, b) => (a.date === b.date ? (a.createdAt < b.createdAt ? 1 : -1) : a.date < b.date ? 1 : -1));
+  for (const inv of list) {
+    const l = (inv.lines || []).find((x) => x.productId === productId && x.unitCost != null);
+    if (l) return l.unitCost;
   }
   return null;
 }

@@ -7,11 +7,11 @@ import { exportDoc } from '../../ui/exporter.js';
 import { registerModule, extend, getExtensions } from '../../core/registry.js';
 import { matches, toFaDigits, formatMoney, formatNumber } from '../../core/util.js';
 import { formatJalali, todayIso, weekdayName } from '../../core/jalali.js';
-import { invoiceTotals, lineAmount, indexById, paidForInvoice } from '../../core/finance.js';
+import { invoiceTotals, invoiceProfit, lineAmount, indexById, paidForInvoice } from '../../core/finance.js';
 import { partyName } from '../parties/model.js';
 import { unitLabel } from '../products/model.js';
 import { getCompany } from '../settings/index.js';
-import { TYPES, typeLabel, partyRoleFor, kindsFor, lastPrice, qtyText, invoiceDoc } from './model.js';
+import { TYPES, typeLabel, partyRoleFor, kindsFor, lastPrice, lastCost, qtyText, invoiceDoc } from './model.js';
 
 const T = 'invoices';
 
@@ -97,6 +97,9 @@ function linesEditor({ db, getType, initial, setError }) {
       total.textContent = formatMoney(lineAmount({ qty: qty.getValue(), price: price.getValue() }));
       notify();
     };
+    const cost = numberField({ value: l.unitCost ?? null, money: true, placeholder: 'قیمت تمام‌شده (ریال)', onInput: notify });
+    const costBox = h('div', { class: 'cost-box' }, h('div', { class: 'label' }, 'قیمت تمام‌شده‌ی واحد (ریال) — فقط برای سود، در فاکتور چاپ نمیشود'), cost);
+    const syncCost = () => (costBox.style.display = getType() === 'sale' ? '' : 'none');
     const qty = numberField({ value: l.qty ?? null, placeholder: 'مقدار', onInput: recalc });
     const price = numberField({ value: l.price ?? null, money: true, placeholder: 'فی (ریال)', onInput: recalc });
     const picker = productPicker({
@@ -115,6 +118,10 @@ function linesEditor({ db, getType, initial, setError }) {
           const lp = await lastPrice(db, getType(), p.id);
           if (lp != null) price.setValue(lp);
         }
+        if (cost.getValue() == null) {
+          const lc = await lastCost(db, p.id);
+          if (lc != null) cost.setValue(lc);
+        }
         recalc();
       },
     });
@@ -124,6 +131,7 @@ function linesEditor({ db, getType, initial, setError }) {
       picker,
       title,
       h('div', { class: 'line-grid' }, h('div', null, h('div', { class: 'label' }, 'مقدار ', unitEl), qty), h('div', null, h('div', { class: 'label' }, 'فی (ریال)'), price)),
+      costBox,
       h(
         'div',
         { class: 'line-foot' },
@@ -146,8 +154,10 @@ function linesEditor({ db, getType, initial, setError }) {
       )
     );
     const lid = l.lid || Math.random().toString(36).slice(2, 10);
-    const entry = { get: () => ({ lid, productId: picker.getValue(), title: title.value.trim(), qty: qty.getValue(), price: price.getValue(), unit }) };
+    const entry = { get: () => ({ lid, productId: picker.getValue(), title: title.value.trim(), qty: qty.getValue(), price: price.getValue(), unit, unitCost: getType() === 'sale' ? cost.getValue() : null }) };
     rows.push(entry);
+    syncCost();
+    wrap.addEventListener('typechange', syncCost);
     list.append(card);
     recalc();
   }
@@ -213,7 +223,7 @@ async function formPage(ctx) {
         if (!l.title && !l.productId) return setError('lines', n + 'شرح یا کالا را وارد کنید');
         if (!(l.qty > 0)) return setError('lines', n + 'مقدار باید بیشتر از صفر باشد');
         if (l.price == null || Number.isNaN(l.price) || l.price < 0) return setError('lines', n + 'فی را وارد کنید');
-        clean.push({ lid: l.lid, productId: l.productId || '', title: l.title || '', qty: l.qty, price: l.price, unit: l.unit || 'kg' });
+        clean.push({ lid: l.lid, productId: l.productId || '', title: l.title || '', qty: l.qty, price: l.price, unit: l.unit || 'kg', unitCost: v.type === 'sale' && l.unitCost != null && !Number.isNaN(l.unitCost) ? l.unitCost : null });
       }
       if (!clean.length) return setError('lines', 'حداقل یک ردیف لازم است');
       if (v.code && (await t.codeTaken(v.code, existing && existing.id))) return setError('code', 'این شماره قبلاً استفاده شده است');
@@ -260,11 +270,35 @@ async function formPage(ctx) {
   form.insertBefore(totalsEl, form.wrapper('code'));
   form.addEventListener('input', paintTotals);
   form.addEventListener('change', paintTotals);
+  form.addEventListener('click', () => setTimeout(() => form.control('lines').dispatchEvent(new Event('typechange')), 0));
   paintTotals();
   ctx.el.append(form);
 }
 
 // ---------------------------------------------------------------- جزئیات
+function profitSection(inv) {
+  const pr = invoiceProfit(inv);
+  return section(
+    'سود این فاکتور',
+    kv('فروش (بعد از تخفیف)', formatMoney(pr.revenue)),
+    kv('بهای تمام‌شده', formatMoney(pr.cost)),
+    h('div', { class: 'kv big' }, h('span', { class: 'k' }, 'سود'), h('span', { class: 'v ' + (pr.profit < 0 ? 'amount-debit' : '') }, formatMoney(pr.profit))),
+    pr.missing ? h('div', { class: 'hint' }, `${toFaDigits(pr.missing)} ردیف «بدون قیمت تمام‌شده» است و در سود حساب نشده.`) : null,
+    h(
+      'div',
+      { class: 'list' },
+      pr.lines.map((x, i) =>
+        row({
+          title: `${toFaDigits(i + 1)}. ${x.line.title}`,
+          subtitle: x.cost == null ? 'بدون قیمت تمام‌شده' : `بها ${formatMoney(x.cost)}`,
+          meta: x.profit == null ? '—' : formatMoney(x.profit),
+          trailing: h('span'),
+        })
+      )
+    )
+  );
+}
+
 async function detailPage(ctx) {
   const inv = await ctx.db.table(T).get(ctx.params.id);
   ctx.setBack('/invoices');
@@ -331,6 +365,7 @@ async function detailPage(ctx) {
       kv(sale ? 'دریافت‌شده' : 'پرداخت‌شده', formatMoney(paid)),
       kv('باقی‌مانده', h('span', { class: remaining ? (sale ? 'amount-debit' : 'amount-credit') : '' }, remaining ? formatMoney(remaining) : 'تسویه'))
     ),
+    ...(sale ? [profitSection(inv)] : []),
     h(
       'div',
       { class: 'btn-row' },

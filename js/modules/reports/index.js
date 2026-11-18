@@ -1,4 +1,4 @@
-// ماژول گزارش‌ها: خلاصه‌ی فروش و خرید، سود هر محصول، برترین مشتری‌ها، ضایعات تولید و کم‌موجودی.
+// ماژول گزارش‌ها: خلاصه‌ی فروش و خرید، سود هر محصول، برترین مشتری‌ها، کم‌موجودی.
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, emptyState, kv, row, section, sheet, toast } from '../../ui/components.js';
@@ -11,8 +11,8 @@ import { partyName } from '../parties/model.js';
 import { unitLabel } from '../products/model.js';
 import { getCompany } from '../settings/index.js';
 import { monthRange } from '../hr/calc.js';
-import { loadStockData, batchSummary } from '../inventory/stock.js';
-import { profitByProduct, periodTotals, topCustomers, wasteInPeriod, lowStock } from './calc.js';
+import { loadStockData } from '../inventory/stock.js';
+import { profitByProduct, profitByCustomer, profitByMonth, periodTotals, lowStock } from './calc.js';
 
 async function loadAll(db) {
   const [invoices, payments, checks, parties, products, stock] = await Promise.all([
@@ -23,7 +23,7 @@ async function loadAll(db) {
     db.table('products').list({ includeDeleted: true }),
     loadStockData(db),
   ]);
-  return { invoices, payments, checks, parties, products, stock, batches: stock.batches, lots: stock.lots };
+  return { invoices, payments, checks, parties, products, stock };
 }
 
 const q3 = (n) => formatNumber(n, { decimals: 3 });
@@ -52,9 +52,11 @@ async function reportsPage(ctx) {
     const d = await loadAll(ctx.db);
     const pById = new Map(d.products.map((p) => [p.id, p]));
     const tot = periodTotals(d, from, to, isPaymentEffective);
-    const pr = profitByProduct({ invoices: d.invoices, batches: d.batches, lots: d.lots }, from, to);
-    const tops = topCustomers(d.invoices, d.parties, from, to);
-    const waste = wasteInPeriod(d.batches, from, to, (b) => batchSummary(b, d.stock.lotsById));
+    const pr = profitByProduct(d.invoices, from, to);
+    const custs = profitByCustomer(d.invoices, d.parties, from, to);
+    const ranges = [];
+    for (let k = -5; k <= 0; k++) ranges.push({ ...monthRange(from, k) });
+    const months = profitByMonth(d.invoices, ranges);
     const low = lowStock(d.products, d.stock);
     current = { pr, pById };
     out.replaceChildren(
@@ -63,7 +65,7 @@ async function reportsPage(ctx) {
         h('div', { class: 'split' }, stat('فروش (با مالیات)', formatMoney(tot.sales), 'amount-credit'), stat('خرید (با مالیات)', formatMoney(tot.purchases), 'amount-debit')),
         h('div', { class: 'split' }, stat('دریافتی', formatMoney(tot.received), 'amount-credit'), stat('پرداختی', formatMoney(tot.paid), 'amount-debit')),
         stat('سود ناخالص فروش', formatMoney(pr.profit), pr.profit < 0 ? 'amount-debit' : 'amount-credit'),
-        pr.unknown ? h('p', { class: 'muted' }, `بهای تمام‌شده‌ی ${toFaDigits(pr.unknown)} کالای فروخته‌شده معلوم نیست (خرید یا تولید ثبت‌شده ندارد) و در سود حساب نشده.`) : null
+        pr.missing ? h('p', { class: 'muted' }, `${toFaDigits(pr.missing)} ردیف فروش «بدون قیمت تمام‌شده» است و در سود حساب نشده.`) : null
       ),
       section(
         'سود هر محصول',
@@ -81,22 +83,21 @@ async function reportsPage(ctx) {
                   h('b', null, name),
                   kv('مقدار فروش', `${q3(r.qty)} ${unit}`),
                   kv('درآمد', formatMoney(r.revenue)),
-                  r.known ? kv(`بهای تمام‌شده (${r.source === 'production' ? 'تولید' : 'خرید'})`, formatMoney(r.cost)) : kv('بهای تمام‌شده', 'نامشخص'),
-                  r.known ? kv('سود', h('b', { class: r.profit < 0 ? 'amount-debit' : 'amount-credit' }, `${formatMoney(r.profit)} (${toFaDigits(r.margin)}٪)`)) : null
+                  kv('بهای تمام‌شده', formatMoney(r.cost)),
+                  kv('سود', h('b', { class: r.profit < 0 ? 'amount-debit' : 'amount-credit' }, `${formatMoney(r.profit)}${r.margin == null ? '' : ` (${toFaDigits(r.margin)}٪)`}`)),
+                  r.missing ? h('small', { class: 'muted' }, `${toFaDigits(r.missing)} ردیف بدون قیمت تمام‌شده`) : null
                 );
               })
             )
           : h('p', { class: 'muted' }, 'در این بازه فروشی ثبت نشده.')
       ),
       section(
-        'برترین مشتری‌ها',
-        tops.length ? h('div', { class: 'list' }, tops.map((t) => row({ leading: icon('user'), title: partyName(t.party) || '—', meta: formatMoney(t.total), onclick: t.party ? () => ctx.go(`/parties/${t.party.id}`) : null }))) : h('p', { class: 'muted' }, 'فروشی ثبت نشده.')
+        'سود هر مشتری',
+        custs.length ? h('div', { class: 'list' }, custs.map((t) => row({ leading: icon('user'), title: partyName(t.party) || '—', subtitle: `فروش ${formatMoney(t.sales)}`, meta: h('b', { class: t.profit < 0 ? 'amount-debit' : 'amount-credit' }, formatMoney(t.profit)), onclick: t.party ? () => ctx.go(`/parties/${t.party.id}`) : null }))) : h('p', { class: 'muted' }, 'فروشی ثبت نشده.')
       ),
       section(
-        'ضایعات تولید (دسته‌های تکمیل‌شده)',
-        waste.n
-          ? h('div', null, kv('تعداد دسته', toFaDigits(waste.n)), kv('مواد اولیه', `${q3(waste.rawKg)} کیلو`), kv('سینی تولیدشده', `${q3(waste.finalKg)} کیلو`), kv('جمع ضایعات', `${q3(waste.waste)} کیلو`), kv('بازده', waste.yieldPct == null ? '' : `${toFaDigits(waste.yieldPct)}٪`))
-          : h('p', { class: 'muted' }, 'دسته‌ی تکمیل‌شده‌ای در این بازه نیست.')
+        'سود ماه‌ها (۶ ماه تا پایان این بازه)',
+        h('div', { class: 'list' }, months.map((m) => { const a = isoToJalaliParts(m.from); return row({ leading: icon('activity'), title: `${MONTHS[a.jm - 1]} ${toFaDigits(a.jy)}`, subtitle: `درآمد ${formatMoney(m.revenue)}`, meta: h('b', { class: m.profit < 0 ? 'amount-debit' : 'amount-credit' }, formatMoney(m.profit)), trailing: h('span') }); }))
       ),
       section('کم‌موجودی (هم‌اکنون)', low.length ? lowStockList(ctx, low) : h('p', { class: 'muted' }, 'کالایی زیر حداقل موجودی نیست. حداقل را در ویرایش هر کالا تعیین کنید.'))
     );
@@ -136,7 +137,7 @@ async function reportsPage(ctx) {
           { label: 'حاشیه', w: 0.13, align: 'center' },
         ],
         rows: pr.rows.map((r) => [(pById.get(r.productId) || {}).name || r.title || '', q3(r.qty), f(r.revenue), f(r.cost), f(r.profit), r.margin == null ? '—' : `${toFaDigits(r.margin)}٪`]),
-        totals: [['جمع درآمد', f(pr.revenue)], ['جمع بها (کالاهای دارای بها)', f(pr.cost)], ['سود ناخالص (ریال)', f(pr.profit), { bold: true }]],
+        totals: [['جمع درآمد', f(pr.revenue)], ['جمع بها', f(pr.cost)], ['سود ناخالص (ریال)', f(pr.profit), { bold: true }]],
         footer: '',
       };
       const r = await exportDoc(doc, kind, 'گزارش_سود');
@@ -169,7 +170,7 @@ async function monthWidget(ctx) {
   const d = await loadAll(ctx.db);
   const { from, to } = monthRange(todayIso());
   const t = periodTotals(d, from, to, isPaymentEffective);
-  const pr = profitByProduct({ invoices: d.invoices, batches: d.batches, lots: d.lots }, from, to);
+  const pr = profitByProduct(d.invoices, from, to);
   return section(
     'این ماه',
     h('div', { class: 'split' }, stat('فروش', formatMoney(t.sales), 'amount-credit'), stat('دریافتی', formatMoney(t.received), 'amount-credit')),
@@ -185,7 +186,7 @@ export function registerReports() {
     id: 'reports',
     title: 'گزارش‌ها',
     tables: [],
-    more: { order: 3, label: 'گزارش‌ها', desc: 'سود هر محصول، فروش، ضایعات و کم‌موجودی', icon: 'activity', path: '/reports' },
+    more: { order: 3, label: 'گزارش‌ها', desc: 'سود هر محصول و مشتری، فروش و کم‌موجودی', icon: 'activity', path: '/reports' },
     routes: [{ path: '/reports', render: reportsPage }],
   });
 }

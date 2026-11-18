@@ -6,6 +6,8 @@ export const KINDS = [
   { value: 'glue', label: 'چسب', unit: 'kg', dims: false },
   { value: 'tape', label: 'نوار چسب', unit: 'count', dims: false },
   { value: 'tray', label: 'سینی', unit: 'kg', dims: true },
+  { value: 'waste', label: 'ضایعات', unit: 'kg', dims: false },
+  { value: 'service', label: 'خدمات', unit: 'kg', dims: false, noStock: true },
   { value: 'other', label: 'سایر', unit: 'count', dims: false },
 ];
 
@@ -16,6 +18,7 @@ export const UNITS = [
 
 export const kindInfo = (v) => KINDS.find((k) => k.value === v) || KINDS[KINDS.length - 1];
 export const unitLabel = (v) => (UNITS.find((u) => u.value === v) || { label: v }).label;
+export const isStockKind = (kind) => !kindInfo(kind).noStock;
 export const hasDims = (kind) => kindInfo(kind).dims;
 
 // «۲۰×۳۰» — سینی‌ها با طول و عرض برش‌خورده‌شون شناخته میشن

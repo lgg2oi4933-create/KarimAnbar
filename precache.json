@@ -1,5 +1,5 @@
 {
-  "version": "45b86ca2d8",
+  "version": "3de552a791",
   "files": [
     "./",
     "./index.html",
@@ -34,7 +34,6 @@
     "./js/modules/payments/index.js",
     "./js/modules/payments/model.js",
     "./js/modules/payments/service.js",
-    "./js/modules/production/index.js",
     "./js/modules/products/index.js",
     "./js/modules/products/model.js",
     "./js/modules/products/tree.js",

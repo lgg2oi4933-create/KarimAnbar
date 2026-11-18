@@ -7,9 +7,8 @@ import { productPicker } from '../../ui/pickers.js';
 import { registerModule, extend } from '../../core/registry.js';
 import { matches, toFaDigits, formatNumber } from '../../core/util.js';
 import { formatJalali, todayIso } from '../../core/jalali.js';
-import { KINDS, kindInfo, unitLabel, dimsText } from '../products/model.js';
-import { partyName } from '../parties/model.js';
-import { REASONS, loadStockData, movementsFor, stockOf, lotUsage, lotRemaining, syncLots } from './stock.js';
+import { KINDS, kindInfo, unitLabel, dimsText, isStockKind } from '../products/model.js';
+import { REASONS_IN, REASONS_OUT, loadStockData, movementsFor, stockOf, runsFrom, runTotals, reasonLabel } from './stock.js';
 
 const T = 'stock_moves';
 const qty = (n, unit) => `${formatNumber(n, { decimals: 3 })} ${unitLabel(unit || 'kg')}`;
@@ -18,8 +17,8 @@ const qty = (n, unit) => `${formatNumber(n, { decimals: 3 })} ${unitLabel(unit |
 async function overviewPage(ctx) {
   ctx.setTitle('انبار');
   ctx.setBack('/more');
-  await syncLots(ctx.db);
-  const [products, data] = await Promise.all([ctx.db.table('products').list(), loadStockData(ctx.db)]);
+  const [allProducts, data] = await Promise.all([ctx.db.table('products').list(), loadStockData(ctx.db)]);
+  const products = allProducts.filter((p) => isStockKind(p.kind));
   let kind = 'all';
   let q = '';
   const listEl = h('div', { class: 'list' });
@@ -46,10 +45,9 @@ async function overviewPage(ctx) {
   ctx.el.append(
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary', onclick: () => moveSheet(ctx, null, {}) }, 'ورود / خروج دستی'),
-      h('button', { class: 'btn ghost', onclick: () => ctx.go('/inventory/lots') }, 'لات‌های ورق'),
-      h('button', { class: 'btn ghost', onclick: () => ctx.go('/production') }, 'تولید')),
+      h('button', { class: 'btn ghost', onclick: () => ctx.go('/inventory/runs') }, 'شماره‌های تولید')),
     searchBar((v) => ((q = v), paint()), 'جستجوی کالا...'),
-    tabs([{ value: 'all', label: 'همه' }, ...KINDS.map((k) => ({ value: k.value, label: k.label }))], kind, (v) => ((kind = v), paint())),
+    tabs([{ value: 'all', label: 'همه' }, ...KINDS.filter((k) => isStockKind(k.value)).map((k) => ({ value: k.value, label: k.label }))], kind, (v) => ((kind = v), paint())),
     listEl
   );
   paint();
@@ -61,7 +59,6 @@ async function productPage(ctx) {
   ctx.setBack('/inventory');
   if (!p || p.deletedAt) return void ctx.el.append(emptyState('box', 'این کالا پیدا نشد'));
   ctx.setTitle(`موجودی ${p.name}`);
-  await syncLots(ctx.db);
   const data = await loadStockData(ctx.db);
   const rows = movementsFor(p.id, data);
   const bal = rows.length ? rows[rows.length - 1].balance : 0;
@@ -81,7 +78,7 @@ async function productPage(ctx) {
                 title: r.desc,
                 subtitle: formatJalali(r.date),
                 meta: h('div', null, h('div', { class: r.qty > 0 ? 'amount-credit' : 'amount-debit' }, `${r.qty > 0 ? '+' : ''}${formatNumber(r.qty, { decimals: 3 })}`), h('small', { class: 'muted' }, `مانده ${formatNumber(r.balance, { decimals: 3 })}`)),
-                onclick: r.refType === 'move' ? async () => moveSheet(ctx, await ctx.db.table(T).get(r.refId), {}) : () => ctx.go(`/${r.refType === 'invoice' ? 'invoices' : 'production'}/${r.refId}`),
+                onclick: r.refType === 'move' ? async () => moveSheet(ctx, await ctx.db.table(T).get(r.refId), {}) : () => ctx.go(`/invoices/${r.refId}`),
               })
             )
         : [emptyState('box', 'هنوز حرکتی ندارد')]
@@ -94,7 +91,7 @@ async function moveSheet(ctx, existing, preset = {}, done) {
   const redo = done || (() => ctx.refresh());
   let s;
   const form = buildForm({
-    values: existing || { direction: 'in', date: todayIso(), reason: 'opening', ...preset },
+    values: existing ? { ...existing, reasonIn: existing.reason, reasonOut: existing.reason } : { direction: 'in', date: todayIso(), reasonIn: 'opening', reasonOut: 'consume', ...preset },
     submitText: existing ? 'ذخیره' : 'ثبت',
     onCancel: () => s.close(),
     extraActions: existing
@@ -107,17 +104,21 @@ async function moveSheet(ctx, existing, preset = {}, done) {
         } }, 'حذف')]
       : [],
     fields: [
-      { name: 'productId', label: 'کالا', type: 'custom', required: true, render: (init) => productPicker({ db: ctx.db, value: init, getKinds: () => [] }) },
+      { name: 'productId', label: 'کالا', type: 'custom', required: true, render: (init) => productPicker({ db: ctx.db, value: init, getKinds: () => KINDS.filter((k) => isStockKind(k.value)).map((k) => k.value) }) },
       { name: 'direction', label: 'نوع', type: 'choice', options: [{ value: 'in', label: 'ورود به انبار' }, { value: 'out', label: 'خروج از انبار' }] },
       { name: 'qty', label: 'مقدار', type: 'number', min: 0, required: true, hint: 'کیلوگرم یا عدد، مطابق واحد کالا' },
       { name: 'date', label: 'تاریخ', type: 'date', required: true },
-      { name: 'reason', label: 'علت', type: 'select', options: REASONS },
+      { name: 'reasonIn', label: 'علت ورود', type: 'select', options: REASONS_IN, show: (v) => v.direction !== 'out' },
+      { name: 'reasonOut', label: 'علت خروج', type: 'select', options: REASONS_OUT, show: (v) => v.direction === 'out' },
+      { name: 'runTag', label: 'شماره تولید (اختیاری)', placeholder: 'مثلاً ۱۲ یا ۱۴۰۵-۰۳', hint: 'با زدن یک شماره‌ی یکسان روی خروج ورق/چسب و ورود سینی و ضایعات، حرکت‌ها در «شماره‌های تولید» کنار هم دیده میشوند.' },
       { name: 'code', label: 'کد', dir: 'ltr', placeholder: 'خودکار ساخته میشود' },
       { name: 'note', label: 'توضیحات', type: 'textarea' },
     ],
     onSubmit: async (v, { setError }) => {
       if (!(v.qty > 0)) return setError('qty', 'مقدار باید بیشتر از صفر باشد');
       const t = ctx.db.table(T);
+      const { reasonIn, reasonOut, ...rest } = v;
+      v = { ...rest, reason: v.direction === 'out' ? reasonOut : reasonIn };
       if (v.code && (await t.codeTaken(v.code, existing && existing.id))) return setError('code', 'این کد قبلاً استفاده شده است');
       if (existing) await t.update(existing.id, { ...v, code: v.code || existing.code });
       else await t.create(v, { prefix: 'SM' });
@@ -129,82 +130,57 @@ async function moveSheet(ctx, existing, preset = {}, done) {
   s = sheet({ title: existing ? 'ویرایش ورود/خروج' : 'ورود / خروج دستی', body: form });
 }
 
-// ---------------------------------------------------------------- لات‌ها
-async function lotsPage(ctx) {
-  ctx.setTitle('لات‌های ورق');
+// ---------------------------------------------------------------- شماره‌های تولید
+async function runsPage(ctx) {
+  ctx.setTitle('شماره‌های تولید');
   ctx.setBack('/inventory');
-  await syncLots(ctx.db);
-  const [lots, products, batches, invoices, parties] = await Promise.all([ctx.db.table('lots').list(), ctx.db.table('products').list(), ctx.db.table('prod_batches').list(), ctx.db.table('invoices').list(), ctx.db.table('parties').list({ includeDeleted: true })]);
-  const pById = new Map(products.map((p) => [p.id, p]));
-  let only = 'open';
-  let q = '';
-  const listEl = h('div', { class: 'list' });
-  const paint = () => {
-    const items = lots
-      .map((l) => ({ l, rem: lotRemaining(l, batches) }))
-      .filter(({ l, rem }) => (only === 'all' ? true : rem > 0))
-      .filter(({ l }) => matches([l.code, (pById.get(l.productId) || {}).name], q))
-      .sort((a, b) => (a.l.date < b.l.date ? 1 : -1));
-    listEl.replaceChildren(
-      ...(items.length
-        ? items.map(({ l, rem }) => row({ leading: icon('box'), title: `${l.code} · ${(pById.get(l.productId) || {}).name || ''}`, subtitle: `${l.moveId ? 'ورود دستی' : 'خرید'} ${formatJalali(l.date)} · ${formatNumber(l.kg, { decimals: 3 })} کیلو`, meta: h('b', { class: rem < 0 ? 'amount-debit' : '' }, `${formatNumber(rem, { decimals: 3 })} کیلو مانده`), onclick: () => ctx.go(`/inventory/lots/${l.id}`) }))
-        : [emptyState('box', lots.length ? 'لات بازی نیست' : 'با ثبت فاکتور خرید یا ورود دستی ورق، لات‌ها خودکار ساخته میشوند')])
-    );
-  };
-  void invoices; void parties;
-  ctx.el.append(searchBar((v) => ((q = v), paint()), 'جستجوی کد لات یا ورق...'), tabs([{ value: 'open', label: 'باقی‌مانده‌دار' }, { value: 'all', label: 'همه' }], only, (v) => ((only = v), paint())), listEl);
-  paint();
+  const [moves, products] = await Promise.all([ctx.db.table(T).list(), ctx.db.table('products').list()]);
+  const runs = [...runsFrom(moves)].map(([tag, list]) => ({ tag, list, date: list.reduce((a, m) => (m.date > a ? m.date : a), '') })).sort((a, b) => (a.date < b.date ? 1 : -1));
+  ctx.el.append(
+    h(
+      'div',
+      { class: 'list' },
+      runs.length
+        ? runs.map((r) => row({ leading: icon('activity'), title: `تولید ${r.tag}`, subtitle: `${toFaDigits(r.list.length)} حرکت · آخرین ${formatJalali(r.date)}`, onclick: () => ctx.go(`/inventory/runs/${encodeURIComponent(r.tag)}`) }))
+        : [emptyState('activity', 'هنوز «شماره تولید» ثبت نشده. هنگام ورود/خروج دستی میتوانید آن را وارد کنید.')]
+    )
+  );
+  void products;
 }
 
-async function lotDetail(ctx) {
-  ctx.setBack('/inventory/lots');
-  await syncLots(ctx.db);
-  const lot = await ctx.db.table('lots').get(ctx.params.id);
-  if (!lot || lot.deletedAt) return void ctx.el.append(emptyState('box', 'این لات پیدا نشد'));
-  ctx.setTitle(`لات ${lot.code}`);
-  const [product, inv, batches] = await Promise.all([ctx.db.table('products').get(lot.productId), lot.invoiceId ? ctx.db.table('invoices').get(lot.invoiceId) : null, ctx.db.table('prod_batches').list()]);
-  const party = inv ? await ctx.db.table('parties').get(inv.partyId) : null;
-  const uses = lotUsage(lot.id, batches);
-  const rem = lotRemaining(lot, batches);
-  const used = uses.reduce((a, u) => a + u.kg, 0);
-  ctx.setActions([h('button', { class: 'icon-btn', 'aria-label': 'ویرایش', onclick: () => lotEditSheet(ctx, lot) }, icon('edit'))]);
+async function runDetail(ctx) {
+  const tag = decodeURIComponent(ctx.params.tag);
+  ctx.setBack('/inventory/runs');
+  ctx.setTitle(`تولید ${tag}`);
+  const [moves, products] = await Promise.all([ctx.db.table(T).list(), ctx.db.table('products').list({ includeDeleted: true })]);
+  const pById = new Map(products.map((p) => [p.id, p]));
+  const list = moves.filter((m) => m.runTag === tag).sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (!list.length) return void ctx.el.append(emptyState('activity', 'حرکتی با این شماره پیدا نشد'));
+  const totals = runTotals(list);
   ctx.el.append(
     section(
-      null,
-      lot.orphan ? h('p', { class: 'muted' }, 'فاکتور یا ردیف خرید این لات حذف شده، ولی چون در تولید مصرف شده سابقه‌اش مانده است.') : null,
-      kv('کد لات', lot.code),
-      kv('ورق', product ? product.name : ''),
-      lot.moveId ? kv('منبع', 'ورود دستی به انبار') : kv('فاکتور خرید', inv ? h('a', { class: 'link', href: `#/invoices/${inv.id}` }, inv.code) : ''),
-      kv('تأمین‌کننده', party && partyName(party)),
-      kv('تاریخ خرید', formatJalali(lot.date)),
-      kv('وزن خرید', `${formatNumber(lot.kg, { decimals: 3 })} کیلو`),
-      kv('مصرف‌شده', `${formatNumber(used, { decimals: 3 })} کیلو`),
-      kv('باقی‌مانده', `${formatNumber(rem, { decimals: 3 })} کیلو`),
-      kv('توضیحات', lot.note)
+      'جمع هر کالا',
+      h(
+        'div',
+        { class: 'list' },
+        totals.map((t) => {
+          const p = pById.get(t.productId) || {};
+          return row({ leading: icon('box'), title: p.name || '—', subtitle: `ورود ${formatNumber(t.in, { decimals: 3 })} · خروج ${formatNumber(t.out, { decimals: 3 })}`, meta: h('b', null, qty(t.in - t.out, p.unit)), trailing: h('span') });
+        })
+      )
     ),
-    section('در کدام دسته‌ها مصرف شده', uses.length ? h('div', { class: 'list' }, uses.map((u) => row({ leading: icon('activity'), title: u.batch.code, subtitle: formatJalali(u.batch.date), meta: `${formatNumber(u.kg, { decimals: 3 })} کیلو`, onclick: () => ctx.go(`/production/${u.batch.id}`) }))) : h('p', { class: 'muted' }, 'هنوز مصرف نشده.'))
+    section(
+      'حرکت‌ها',
+      h(
+        'div',
+        { class: 'list' },
+        list.map((m) => {
+          const p = pById.get(m.productId) || {};
+          return row({ leading: icon(m.direction === 'in' ? 'plus' : 'back'), title: `${p.name || '—'} · ${reasonLabel(m.reason)}`, subtitle: formatJalali(m.date), meta: h('span', { class: m.direction === 'in' ? 'amount-credit' : 'amount-debit' }, qty(m.qty, p.unit)), onclick: async () => moveSheet(ctx, await ctx.db.table(T).get(m.id), {}) });
+        })
+      )
+    )
   );
-}
-
-function lotEditSheet(ctx, lot) {
-  let s;
-  const form = buildForm({
-    values: lot,
-    submitText: 'ذخیره',
-    onCancel: () => s.close(),
-    fields: [
-      { name: 'code', label: 'کد لات', dir: 'ltr', required: true },
-      { name: 'note', label: 'توضیحات', type: 'textarea' },
-    ],
-    onSubmit: async (v, { setError }) => {
-      if (await ctx.db.table('lots').codeTaken(v.code, lot.id)) return setError('code', 'این کد قبلاً استفاده شده است');
-      await ctx.db.table('lots').update(lot.id, v);
-      s.close();
-      toast('ذخیره شد');
-      ctx.refresh();
-    },
-  });
-  s = sheet({ title: 'ویرایش لات', body: form });
 }
 
 // ---------------------------------------------------------------- موجودی در صفحه‌ی کالا
@@ -221,23 +197,22 @@ async function productStockSection(ctx, p) {
 export function registerInventory() {
   extend('product.detail', productStockSection);
   extend('product.deleteGuard', async (db, p) => {
-    const [moves, batches] = await Promise.all([db.table(T).list(), db.table('prod_batches').list()]);
-    const used = moves.some((m) => m.productId === p.id) || batches.some((b) => b.trayProductId === p.id || (b.glue && b.glue.glueProductId === p.id) || (b.tape && b.tape.tapeProductId === p.id));
-    return used ? 'این کالا در انبار یا تولید استفاده شده. اگر اشتباه ثبت شده، ویرایشش کنید.' : null;
+    const moves = await db.table(T).list();
+    return moves.some((m) => m.productId === p.id) ? 'این کالا در ورود/خروج انبار استفاده شده. اگر اشتباه ثبت شده، ویرایشش کنید.' : null;
   });
   registerModule({
     id: 'inventory',
     title: 'انبار',
-    tables: [T, 'lots'],
-    tableLabels: { [T]: 'ورود/خروج انبار', lots: 'لات‌های ورق' },
-    fieldLabels: { direction: 'نوع', qty: 'مقدار', reason: 'علت', productId: 'کالا', kg: 'وزن', orphan: 'بی‌منبع' },
-    home: { order: 40, label: 'انبار', icon: 'box', path: '/inventory', count: async (db) => `${toFaDigits((await db.table('lots').list()).length)} لات ورق` },
-    more: { order: 7, label: 'انبار', desc: 'موجودی، ورود/خروج و لات‌های ورق', icon: 'box', path: '/inventory' },
+    tables: [T],
+    tableLabels: { [T]: 'ورود/خروج انبار' },
+    fieldLabels: { direction: 'نوع', qty: 'مقدار', reason: 'علت', productId: 'کالا', runTag: 'شماره تولید' },
+    home: { order: 40, label: 'انبار', icon: 'box', path: '/inventory', count: async (db) => `${toFaDigits((await db.table('products').list()).filter((p) => isStockKind(p.kind)).length)} کالا` },
+    more: { order: 7, label: 'انبار', desc: 'موجودی، ورود/خروج دستی و شماره‌های تولید', icon: 'box', path: '/inventory' },
     routes: [
       { path: '/inventory', render: overviewPage },
       { path: '/inventory/product/:id', render: productPage },
-      { path: '/inventory/lots', render: lotsPage },
-      { path: '/inventory/lots/:id', render: lotDetail },
+      { path: '/inventory/runs', render: runsPage },
+      { path: '/inventory/runs/:tag', render: runDetail },
     ],
   });
 }
