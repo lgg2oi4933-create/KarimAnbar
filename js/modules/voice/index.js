@@ -15,7 +15,7 @@ const API = 'https://generativelanguage.googleapis.com/v1beta';
 const PROMPT = `این یک پیام صوتی فارسی از یک کارخانه‌ی تولید سینی مقوایی است (فاکتور فروش/خرید، دریافت/پرداخت یا ورود/خروج انبار).
 اول عین حرف‌ها را به فارسی بنویس، بعد فقط یک JSON با این کلیدها بده (هرچه گفته نشده null):
 {"transcript": "", "kind": "sale|purchase|payment_in|payment_out|stock_in|stock_out|unknown", "party": "", "items": [{"product": "", "length_cm": null, "width_cm": null, "qty": null, "unit": "kg|count", "price": null, "unit_cost": null}], "amount": null, "note": ""}
-اعداد را به شکل عدد لاتین بده. قیمت‌ها به ریال؛ اگر «تومان» گفته شد ده برابر کن و در note بنویس.`;
+قیمتی که برای هر قلم گفته میشود (مثلاً «به قیمت ۳۰۰۰ تومان») همیشه در price (فی فاکتور، هر واحد) بیاید؛ unit_cost فقط وقتی پر شود که صریحاً «قیمت تمام‌شده» یا «بهای تمام‌شده» گفته شده باشد. اگر قیمت صفر گفته شد price را 0 بده نه null. اعداد را به شکل عدد لاتین بده. قیمت‌ها به ریال؛ اگر «تومان» گفته شد ده برابر کن و در note بنویس.`;
 
 const b64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
 
