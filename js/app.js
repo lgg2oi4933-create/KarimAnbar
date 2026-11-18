@@ -22,6 +22,7 @@ import { registerHr } from './modules/hr/index.js';
 import { registerReports } from './modules/reports/index.js';
 import { registerBackup } from './modules/backup/index.js';
 import { registerInventory } from './modules/inventory/index.js';
+import { registerVoice } from './modules/voice/index.js';
 
 // ترتیب ثبت مهم نیست؛ ترتیب نمایش با order هر ماژول تعیین میشود
 registerAuth();
@@ -36,6 +37,7 @@ registerInventory();
 registerHr();
 registerReports();
 registerBackup();
+registerVoice();
 registerSettings();
 
 async function boot() {

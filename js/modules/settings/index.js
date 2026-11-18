@@ -11,7 +11,7 @@ import { requestPersistentStorage } from '../../core/storage.js';
 import { applyTheme } from '../../ui/theme.js';
 import { USER_ROLES, roleLabel, isAdmin, currentUser, ensureLogin, changeMyPasswordSheet, createRecoveryCode, showRecoveryCodeSheet, getRecovery } from '../auth/index.js';
 
-const APP_VERSION = '0.6.0 (مرحله ۶)';
+const APP_VERSION = '0.6.1 (آزمایش صدا)';
 export const DEFAULT_TAX = 10;
 
 export async function getCompany(db) {
