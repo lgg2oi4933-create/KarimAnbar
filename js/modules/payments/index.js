@@ -1,4 +1,5 @@
 // ماژول دریافت و پرداخت: نقد، چک، حواله. چک‌ها خودکار در ماژول چک ثبت میشوند.
+import { takeDraft } from '../voice/draft.js';
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, confirmDialog, emptyState, fab, kv, row, searchBar, section, sheet, tabs, toast } from '../../ui/components.js';
@@ -107,6 +108,7 @@ export function invoiceSelect({ db, getDir, getPartyId, initial }) {
 // ---------------------------------------------------------------- فرم
 async function formPage(ctx) {
   const editing = !!ctx.params.id;
+  const vd = editing ? null : takeDraft('payment');
   const pt = ctx.db.table(T);
   const existing = editing ? await pt.get(ctx.params.id) : null;
   ctx.setBack(editing ? `/payments/${ctx.params.id}` : '/payments');
@@ -121,7 +123,7 @@ async function formPage(ctx) {
   }
   const check = existing && existing.checkId ? await ctx.db.table('checks').get(existing.checkId) : null;
   const q = ctx.query;
-  const dir0 = existing ? existing.direction : q.dir === 'out' ? 'out' : 'in';
+  const dir0 = existing ? existing.direction : vd ? vd.direction : q.dir === 'out' ? 'out' : 'in';
   ctx.setTitle(editing ? 'ویرایش' : dir0 === 'in' ? 'دریافت جدید' : 'پرداخت جدید');
 
   const values = existing
@@ -142,6 +144,7 @@ async function formPage(ctx) {
         invoiceId: q.invoice || '',
         amount: q.amount ? Number(q.amount) : null,
         ckStatus: 'pending',
+        ...(vd ? { partyId: vd.partyId || '', amount: vd.amount || null, method: vd.method === 'check' ? 'check' : 'cash', note: vd.note || '' } : {}),
       };
 
   let form;

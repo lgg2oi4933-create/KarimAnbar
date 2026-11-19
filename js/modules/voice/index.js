@@ -1,136 +1,149 @@
-// صفحه‌ی آزمایشی صدا: ضبط صدا، ارسال به Gemini، نمایش متن و فیلدهای استخراج‌شده.
-// کلید API فقط در localStorage همین گوشی ذخیره میشود (نه در پایگاه داده، پس در بک‌آپ و ادغام نمی‌آید).
+// ماژول صدا: ثبت با صدا (فاکتور، دریافت/پرداخت، ورود/خروج انبار) + صفحه‌ی آزمایش.
 import { h } from '../../ui/dom.js';
-import { section, toast, kv } from '../../ui/components.js';
-import { registerModule } from '../../core/registry.js';
+import { icon } from '../../ui/icons.js';
+import { section, toast, kv, sheet } from '../../ui/components.js';
+import { registerModule, extend } from '../../core/registry.js';
+import { toFaDigits } from '../../core/util.js';
+import { partyName } from '../parties/model.js';
+import { store, KEY, MODEL_KEY, DEFAULT_MODEL, hasKey, listModels, transcribe, startRecording, friendlyError } from './ai.js';
+import { resolveParsed, productText } from './resolve.js';
+import { setDraft } from './draft.js';
 
-const KEY = 'tray.geminiKey';
-const MODEL_KEY = 'tray.geminiModel';
-const store = {
-  get: (k, d = '') => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } },
-  set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) { /* ignore */ } },
-};
-const API = 'https://generativelanguage.googleapis.com/v1beta';
+const TARGET = { sale: '/invoices/new?type=sale', purchase: '/invoices/new?type=purchase', payment_in: '/payments/new?dir=in', payment_out: '/payments/new?dir=out', stock_in: '/inventory', stock_out: '/inventory' };
+const KIND_LABEL = { sale: 'فاکتور فروش', purchase: 'فاکتور خرید', payment_in: 'دریافت', payment_out: 'پرداخت', stock_in: 'ورود به انبار', stock_out: 'خروج از انبار', unknown: 'نامشخص' };
 
-const PROMPT = `این یک پیام صوتی فارسی از یک کارخانه‌ی تولید سینی مقوایی است (فاکتور فروش/خرید، دریافت/پرداخت یا ورود/خروج انبار).
-اول عین حرف‌ها را به فارسی بنویس، بعد فقط یک JSON با این کلیدها بده (هرچه گفته نشده null):
-{"transcript": "", "kind": "sale|purchase|payment_in|payment_out|stock_in|stock_out|unknown", "party": "", "items": [{"product": "", "length_cm": null, "width_cm": null, "qty": null, "unit": "kg|count", "price": null, "unit_cost": null}], "amount": null, "note": ""}
-قیمتی که برای هر قلم گفته میشود (مثلاً «به قیمت ۳۰۰۰ تومان») همیشه در price (فی فاکتور، هر واحد) بیاید؛ unit_cost فقط وقتی پر شود که صریحاً «قیمت تمام‌شده» یا «بهای تمام‌شده» گفته شده باشد. اگر قیمت صفر گفته شد price را 0 بده نه null. اعداد را به شکل عدد لاتین بده. قیمت‌ها به ریال؛ اگر «تومان» گفته شد ده برابر کن و در note بنویس.`;
-
-const b64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
-
-async function listModels(key) {
-  const r = await fetch(`${API}/models?pageSize=100`, { headers: { 'x-goog-api-key': key } });
-  const j = await r.json();
-  if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
-  return (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace('models/', ''));
+function go(ctx, path) {
+  if (location.hash === '#' + path) ctx.refresh();
+  else ctx.go(path);
 }
 
-async function transcribe(key, model, blob) {
-  const body = {
-    contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: (blob.type || 'audio/webm').split(';')[0], data: await b64(blob) } }] }],
-    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+// پیش‌نویس را آماده و به فرم مربوط میبرد
+export function applyResolved(ctx, r) {
+  if (r.kind === 'sale' || r.kind === 'purchase') setDraft('invoice', { type: r.kind, partyId: r.partyId || '', lines: r.lines, note: r.note });
+  else if (r.kind === 'payment_in' || r.kind === 'payment_out') setDraft('payment', { direction: r.kind === 'payment_in' ? 'in' : 'out', partyId: r.partyId || '', amount: r.amount, method: r.method, note: r.note });
+  else if (r.kind === 'stock_in' || r.kind === 'stock_out') setDraft('stock', r.moves.slice());
+  else return false;
+  go(ctx, TARGET[r.kind]);
+  return true;
+}
+
+async function loadLists(ctx) {
+  const [parties, products] = await Promise.all([ctx.db.table('parties').list(), ctx.db.table('products').list()]);
+  return { parties, products };
+}
+
+// برگه‌ی ضبط ← تأیید ← رفتن به فرم
+export async function openVoiceSheet(ctx) {
+  if (!hasKey()) return ctx.go('/voice');
+  if (!navigator.onLine) return toast('اینترنت وصل نیست؛ ثبت دستی را بزنید', 'err');
+  const lists = await loadLists(ctx);
+  let rec = null;
+  let s;
+  const status = h('p', { class: 'muted' }, 'دکمه را بزنید و جمله را بگویید.');
+  const body = h('div');
+  const btn = h('button', { class: 'btn primary', type: 'button' }, '🎙 شروع ضبط');
+  const showResult = (res) => {
+    const r = resolveParsed(res.parsed || {}, lists);
+    const pById = new Map(lists.products.map((p) => [p.id, p]));
+    const fa = (n) => (n == null ? '؟' : toFaDigits(Number(n).toLocaleString('en-US')));
+    body.replaceChildren(
+      ...[
+      section('شنیده شد', h('p', null, r.transcript || res.text)),
+      kv('نوع', KIND_LABEL[r.kind] || r.kind),
+      r.partyName ? kv('طرف حساب', r.partyName) : null,
+      r.amount ? kv('مبلغ', fa(Math.round(r.amount)) + ' ریال') : null,
+      ...(r.lines || []).map((l, i) => kv(`قلم ${toFaDigits(i + 1)}`, `${l.matched || l.title} · ${fa(l.qty)} · فی ${fa(l.price)}`)),
+      ...(r.moves || []).map((m, i) => kv(`حرکت ${toFaDigits(i + 1)}`, `${m.direction === 'in' ? 'ورود' : 'خروج'} ${m.productName || '؟'} · ${fa(m.qty)}${m.runTag ? ` · تولید ${toFaDigits(m.runTag)}` : ''}`)),
+      ...r.warnings.map((w) => h('p', { class: 'hint' }, w)),
+      h(
+        'div',
+        { class: 'btn-row' },
+        h('button', { class: 'btn primary', type: 'button', disabled: !TARGET[r.kind], onclick: () => { s.close(); applyResolved(ctx, r); } }, 'ادامه به فرم (قابل ویرایش)'),
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => { body.replaceChildren(); status.textContent = 'دوباره بگویید.'; } }, 'ضبط دوباره')
+      )
+      ].filter(Boolean)
+    );
+    void pById;
   };
-  const t0 = performance.now();
-  const r = await fetch(`${API}/models/${model}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
-  const j = await r.json();
-  if (!r.ok) throw new Error((j.error && j.error.message) || r.status);
-  const text = (((j.candidates || [])[0] || {}).content || {}).parts?.map((p) => p.text).join('') || '';
-  return { text, ms: Math.round(performance.now() - t0) };
+  btn.onclick = async () => {
+    if (rec) {
+      const r0 = rec;
+      rec = null;
+      btn.textContent = '🎙 شروع ضبط';
+      btn.disabled = true;
+      status.textContent = 'در حال تشخیص...';
+      try {
+        const blob = await r0.stop();
+        const res = await transcribe(blob, { parties: lists.parties.filter((p) => !p.deletedAt).map(partyName), products: lists.products.filter((p) => !p.deletedAt).map(productText) });
+        status.textContent = `پاسخ در ${toFaDigits(Math.round(res.ms / 100) / 10)} ثانیه`;
+        showResult(res);
+      } catch (e) {
+        status.textContent = friendlyError(e);
+      }
+      btn.disabled = false;
+      return;
+    }
+    try {
+      rec = await startRecording();
+    } catch (e) {
+      return toast('دسترسی میکروفون داده نشد', 'err');
+    }
+    body.replaceChildren();
+    btn.textContent = '⏹ پایان و ارسال';
+    status.textContent = 'در حال ضبط...';
+  };
+  s = sheet({ title: 'ثبت با صدا', body: h('div', null, h('p', { class: 'muted' }, 'مثلاً: «فروش صد کیلو سینی بیست در سی به آقای کریمی، فی دویست و پنجاه هزار ریال» یا «خروج ۵۰۰ کیلو ورق برای مصرف در تولید شماره ۱۲».'), btn, status, body) });
+}
+
+// ویجت خانه
+async function voiceWidget(ctx) {
+  if (!hasKey()) return null;
+  return h('button', { class: 'btn primary', type: 'button', style: { width: '100%', margin: '12px 0' }, onclick: () => openVoiceSheet(ctx) }, icon('activity', 18), ' ثبت با صدا');
 }
 
 function voicePage(ctx) {
-  ctx.setTitle('آزمایش صدا');
+  ctx.setTitle('ثبت با صدا');
   ctx.setBack('/more');
   const keyIn = h('input', { type: 'password', dir: 'ltr', placeholder: 'AQ... یا AIza...', value: store.get(KEY), 'aria-label': 'کلید API' });
-  const modelIn = h('input', { type: 'text', dir: 'ltr', value: store.get(MODEL_KEY, 'gemini-2.5-flash'), 'aria-label': 'نام مدل' });
-  const modelsEl = h('p', { class: 'muted' });
-  const status = h('p', { class: 'muted' }, 'آماده');
-  const out = h('div');
-  let rec = null;
-  let chunks = [];
-  let stream = null;
-  const online = () => navigator.onLine;
-
+  const modelIn = h('input', { type: 'text', dir: 'ltr', value: store.get(MODEL_KEY, DEFAULT_MODEL), 'aria-label': 'نام مدل' });
+  const info = h('p', { class: 'muted' });
   const save = () => { store.set(KEY, keyIn.value.trim()); store.set(MODEL_KEY, modelIn.value.trim()); };
   const testKey = async () => {
     save();
     if (!keyIn.value.trim()) return toast('کلید را وارد کنید', 'err');
-    status.textContent = 'در حال بررسی کلید...';
+    info.textContent = 'در حال بررسی کلید...';
     try {
       const m = await listModels(keyIn.value.trim());
-      const flash = m.filter((x) => /flash/.test(x));
-      modelsEl.textContent = `کلید معتبر است. مدل‌های فلش: ${flash.slice(0, 8).join('، ')}`;
-      status.textContent = 'کلید معتبر';
+      info.textContent = `کلید معتبر است. مدل‌های فلش: ${m.filter((x) => /flash/.test(x)).slice(0, 8).join('، ')}`;
     } catch (e) {
-      status.textContent = 'خطا: ' + e.message;
+      info.textContent = friendlyError(e);
     }
   };
-
-  const recBtn = h('button', { class: 'btn primary', type: 'button' }, '🎙 شروع ضبط');
-  const send = async (blob) => {
-    status.textContent = `ارسال ${Math.round(blob.size / 1024)} کیلوبایت...`;
-    try {
-      const { text, ms } = await transcribe(keyIn.value.trim(), modelIn.value.trim(), blob);
-      let parsed = null;
-      try { parsed = JSON.parse(text); } catch (e) { /* show raw */ }
-      status.textContent = `پاسخ در ${Math.round(ms / 100) / 10} ثانیه`;
-      out.replaceChildren(
-        section('متن شنیده‌شده', h('p', null, parsed ? parsed.transcript || '' : text)),
-        parsed
-          ? section('فیلدهای استخراج‌شده', kv('نوع', parsed.kind), kv('طرف حساب', parsed.party), kv('مبلغ', parsed.amount), kv('توضیح', parsed.note), ...(parsed.items || []).map((it, i) => kv(`قلم ${i + 1}`, `${it.product || ''} ${it.length_cm ? `${it.length_cm}×${it.width_cm}` : ''} · ${it.qty ?? '؟'} ${it.unit || ''} · فی ${it.price ?? '؟'}`)))
-          : null,
-        section('پاسخ خام', h('pre', { dir: 'ltr', style: { whiteSpace: 'pre-wrap', fontSize: '12px' } }, text))
-      );
-    } catch (e) {
-      status.textContent = 'خطا: ' + e.message;
-    }
-  };
-  recBtn.onclick = async () => {
-    if (rec) return rec.stop();
-    save();
-    if (!keyIn.value.trim()) return toast('اول کلید را وارد کنید', 'err');
-    if (!online()) return toast('اینترنت وصل نیست', 'err');
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (e) {
-      return toast('دسترسی میکروفون داده نشد', 'err');
-    }
-    chunks = [];
-    rec = new MediaRecorder(stream);
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    rec.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-      rec = null;
-      recBtn.textContent = '🎙 شروع ضبط';
-      send(blob);
-    };
-    rec.start();
-    recBtn.textContent = '⏹ پایان ضبط و ارسال';
-    status.textContent = 'در حال ضبط... جمله را بگویید';
-  };
-
   ctx.el.append(
     section(
       'تنظیم',
-      h('p', { class: 'muted' }, 'کلید فقط روی همین گوشی ذخیره میشود و در بک‌آپ نمی‌آید. برای تست جمله‌ای مثل «صد کیلو سینی بیست در سی، فی دویست و پنجاه هزار، فروش به آقای کریمی» بگویید.'),
+      h('p', { class: 'muted' }, 'تشخیص صدا با Gemini گوگل انجام میشود و به اینترنت (و در ایران معمولاً VPN) نیاز دارد. کلید فقط روی همین گوشی ذخیره میشود و در بک‌آپ و ادغام نمی‌آید؛ هر گوشی کلید خودش را وارد کند. صدا و اسم‌ها برای تشخیص به گوگل فرستاده میشوند.'),
       h('div', { class: 'field' }, h('div', { class: 'label' }, 'کلید API'), keyIn),
       h('div', { class: 'field' }, h('div', { class: 'label' }, 'مدل'), modelIn),
-      h('div', { class: 'btn-row' }, h('button', { class: 'btn ghost', type: 'button', onclick: testKey }, 'بررسی کلید و فهرست مدل‌ها'), h('button', { class: 'btn ghost', type: 'button', onclick: () => (store.set(KEY, ''), (keyIn.value = ''), toast('کلید پاک شد')) }, 'پاک کردن کلید')),
-      modelsEl
+      h(
+        'div',
+        { class: 'btn-row' },
+        h('button', { class: 'btn ghost', type: 'button', onclick: testKey }, 'ذخیره و بررسی کلید'),
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => { store.set(KEY, ''); keyIn.value = ''; toast('کلید پاک شد'); } }, 'پاک کردن کلید')
+      ),
+      info
     ),
-    section('ضبط', recBtn, status),
-    out
+    section('امتحان', h('button', { class: 'btn primary', type: 'button', onclick: () => { save(); openVoiceSheet(ctx); } }, '🎙 ثبت با صدا'), h('p', { class: 'muted' }, 'بعد از تشخیص، فرم پر میشود و قبل از ذخیره همه‌چیز را می‌بینید و اصلاح می‌کنید.'))
   );
 }
 
 export function registerVoice() {
+  extend('home.widget', voiceWidget);
   registerModule({
     id: 'voice',
     title: 'صدا',
     tables: [],
-    more: { order: 90, label: 'آزمایش صدا', desc: 'ضبط جمله و دیدن متن و فیلدهای استخراج‌شده', icon: 'activity', path: '/voice', adminOnly: true },
+    more: { order: 90, label: 'ثبت با صدا', desc: 'کلید Gemini و ثبت صوتی', icon: 'activity', path: '/voice', adminOnly: true },
     routes: [{ path: '/voice', render: voicePage }],
   });
 }

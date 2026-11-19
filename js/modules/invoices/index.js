@@ -1,4 +1,5 @@
 // ماژول فاکتور: خرید و فروش، اقلام، تخفیف و مالیات، خروجی تصویر/PDF
+import { takeDraft } from '../voice/draft.js';
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, confirmDialog, emptyState, fab, kv, numberField, row, searchBar, section, sheet, tabs, toast } from '../../ui/components.js';
@@ -171,6 +172,7 @@ function linesEditor({ db, getType, initial, setError }) {
 // ---------------------------------------------------------------- فرم
 async function formPage(ctx) {
   const editing = !!ctx.params.id;
+  const vd = editing ? null : takeDraft('invoice');
   const t = ctx.db.table(T);
   const existing = editing ? await t.get(ctx.params.id) : null;
   ctx.setBack(editing ? `/invoices/${ctx.params.id}` : '/invoices');
@@ -179,7 +181,7 @@ async function formPage(ctx) {
     return;
   }
   const company = await getCompany(ctx.db);
-  const type0 = existing ? existing.type : ctx.query.type === 'purchase' ? 'purchase' : 'sale';
+  const type0 = existing ? existing.type : vd ? vd.type : ctx.query.type === 'purchase' ? 'purchase' : 'sale';
   ctx.setTitle(editing ? 'ویرایش فاکتور' : type0 === 'sale' ? 'فاکتور فروش جدید' : 'فاکتور خرید جدید');
 
   let form;
@@ -189,7 +191,7 @@ async function formPage(ctx) {
   };
 
   form = buildForm({
-    values: existing || { type: type0, date: todayIso(), taxPercent: company.taxPercent, discount: null, partyId: ctx.query.party || '' },
+    values: existing || { type: type0, date: todayIso(), taxPercent: company.taxPercent, discount: null, partyId: (vd && vd.partyId) || ctx.query.party || '', ...(vd ? { lines: vd.lines, note: vd.note || '' } : {}) },
     submitText: editing ? 'ذخیره تغییرات' : 'ثبت فاکتور',
     onCancel: () => ctx.back(),
     fields: [

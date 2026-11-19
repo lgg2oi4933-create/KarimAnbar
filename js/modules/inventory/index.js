@@ -1,5 +1,6 @@
 // ماژول انبار: موجودی کالاها، ورود/خروج دستی، لات‌های ورق و کاردکس هر کالا.
 // موجودی از فاکتورها و تولید حساب میشود؛ اینجا فقط تعدیل‌های دستی ذخیره میشود.
+import { takeDraft } from '../voice/draft.js';
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { badge, buildForm, confirmDialog, emptyState, kv, row, searchBar, section, sheet, tabs, toast } from '../../ui/components.js';
@@ -14,9 +15,22 @@ const T = 'stock_moves';
 const qty = (n, unit) => `${formatNumber(n, { decimals: 3 })} ${unitLabel(unit || 'kg')}`;
 
 // ---------------------------------------------------------------- نمای کلی انبار
+function openVoiceQueue(ctx, queue) {
+  const m = queue.shift();
+  if (!m) return;
+  const preset = { direction: m.direction, qty: m.qty, productId: m.productId, runTag: m.runTag || '' };
+  if (m.reason) preset[m.direction === 'in' ? 'reasonIn' : 'reasonOut'] = m.reason;
+  moveSheet(ctx, null, preset, () => {
+    ctx.refresh();
+    if (queue.length) setTimeout(() => openVoiceQueue(ctx, queue), 400);
+  });
+}
+
 async function overviewPage(ctx) {
   ctx.setTitle('انبار');
   ctx.setBack('/more');
+  const vq = takeDraft('stock');
+  if (vq && vq.length) setTimeout(() => openVoiceQueue(ctx, vq), 0);
   const [allProducts, data] = await Promise.all([ctx.db.table('products').list(), loadStockData(ctx.db)]);
   const products = allProducts.filter((p) => isStockKind(p.kind));
   let kind = 'all';
